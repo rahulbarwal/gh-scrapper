@@ -8,3 +8,9 @@ export {
   type PaginationOptions,
   type IssueFilters,
 } from "./github-client";
+export {
+  RelevanceFilter,
+  type RelevanceFilterOptions,
+  type RelevanceWeights,
+  type KeywordMatch,
+} from "./relevance-filter";
