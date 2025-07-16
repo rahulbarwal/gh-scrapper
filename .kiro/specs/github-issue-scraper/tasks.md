@@ -33,8 +33,9 @@
   - Add sorting by relevance score and activity level
   - _Requirements: 5.1, 5.2, 5.3, 5.5_
 
-- [ ] 5. Develop issue parsing and analysis
+- [x] 5. Develop issue parsing and analysis
 
+  - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
   - Create issue content parser to extract title, description, labels, and metadata
   - Implement comment analysis to identify workaround patterns
   - Build workaround extraction logic with author type classification

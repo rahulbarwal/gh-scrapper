@@ -14,3 +14,10 @@ export {
   type RelevanceWeights,
   type KeywordMatch,
 } from "./relevance-filter";
+export {
+  IssueParser,
+  type ParsedIssueContent,
+  type IssueMetadata,
+  type WorkaroundPattern,
+  type SummaryOptions,
+} from "./issue-parser";
