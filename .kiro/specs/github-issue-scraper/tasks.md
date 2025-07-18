@@ -61,7 +61,7 @@
   - Add verbose logging options for debugging
   - _Requirements: 1.1, 5.1, 5.4_
 
-- [ ] 8. Add comprehensive error handling
+- [x] 8. Add comprehensive error handling
 
   - Implement specific error handling for authentication failures with helpful messages
   - Add network error recovery with retry mechanisms
@@ -72,6 +72,7 @@
 
 - [ ] 9. Create unit tests for core functionality
 
+  - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
   - Write tests for GitHub API client with mocked responses
   - Create tests for relevance scoring algorithm with known issue datasets
   - Implement tests for issue parsing and workaround extraction
@@ -81,6 +82,7 @@
 
 - [ ] 10. Build integration tests
 
+  - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
   - Create end-to-end test with a test GitHub repository
   - Implement authentication flow testing
   - Add tests for rate limiting and error recovery scenarios
@@ -89,6 +91,8 @@
   - _Requirements: 1.2, 3.2, 3.4, 5.3, 5.5_
 
 - [ ] 11. Finalize CLI tool and documentation
+
+  - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
   - Create executable CLI script with proper shebang and permissions
   - Write comprehensive README with installation and usage instructions
   - Add example commands and sample output

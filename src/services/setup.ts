@@ -1,6 +1,7 @@
 import * as readline from "readline";
 import { ConfigManager } from "./config";
 import { AuthenticationService } from "./auth";
+import { ErrorHandler, ScraperError, ErrorContext } from "./error-handler";
 
 export class SetupService {
   private configManager: ConfigManager;
@@ -24,6 +25,10 @@ export class SetupService {
     console.log(
       "This tool helps you scrape and analyze GitHub issues for specific product areas.\n"
     );
+
+    const context: ErrorContext = {
+      operation: "interactive setup process",
+    };
 
     try {
       // Load existing configuration
@@ -76,8 +81,14 @@ export class SetupService {
       );
 
       return true;
-    } catch (error) {
-      console.error("\n❌ Setup failed:", error);
+    } catch (error: any) {
+      // Use centralized error handling for better user experience
+      if (error instanceof ScraperError) {
+        console.error("\n" + ErrorHandler.formatError(error, false));
+      } else {
+        const scraperError = ErrorHandler.convertToScraperError(error, context);
+        console.error("\n" + ErrorHandler.formatError(scraperError, false));
+      }
       return false;
     } finally {
       this.rl.close();
@@ -278,34 +289,54 @@ export class SetupService {
       return;
     }
 
-    // Max issues
-    const maxIssuesInput = await this.askQuestion(
-      "Maximum issues to process (default: 50): "
-    );
-    if (maxIssuesInput.trim()) {
-      const maxIssues = parseInt(maxIssuesInput.trim(), 10);
-      if (!isNaN(maxIssues) && maxIssues > 0) {
-        await this.configManager.saveConfig({ maxIssues });
+    try {
+      // Max issues
+      const maxIssuesInput = await this.askQuestion(
+        "Maximum issues to process (default: 50): "
+      );
+      if (maxIssuesInput.trim()) {
+        const maxIssues = parseInt(maxIssuesInput.trim(), 10);
+        if (isNaN(maxIssues) || maxIssues <= 0 || maxIssues > 1000) {
+          console.log(
+            "⚠️  Invalid value. Using default (50). Valid range: 1-1000"
+          );
+        } else {
+          await this.configManager.saveConfig({ maxIssues });
+        }
       }
-    }
 
-    // Min relevance score
-    const minScoreInput = await this.askQuestion(
-      "Minimum relevance score (0-100, default: 30): "
-    );
-    if (minScoreInput.trim()) {
-      const minScore = parseInt(minScoreInput.trim(), 10);
-      if (!isNaN(minScore) && minScore >= 0 && minScore <= 100) {
-        await this.configManager.saveConfig({ minRelevanceScore: minScore });
+      // Min relevance score
+      const minScoreInput = await this.askQuestion(
+        "Minimum relevance score (0-100, default: 30): "
+      );
+      if (minScoreInput.trim()) {
+        const minScore = parseInt(minScoreInput.trim(), 10);
+        if (isNaN(minScore) || minScore < 0 || minScore > 100) {
+          console.log(
+            "⚠️  Invalid value. Using default (30). Valid range: 0-100"
+          );
+        } else {
+          await this.configManager.saveConfig({ minRelevanceScore: minScore });
+        }
       }
-    }
 
-    // Output path
-    const outputPath = await this.askQuestion(
-      "Output directory (default: ./reports): "
-    );
-    if (outputPath.trim()) {
-      await this.configManager.saveConfig({ outputPath: outputPath.trim() });
+      // Output path
+      const outputPath = await this.askQuestion(
+        "Output directory (default: ./reports): "
+      );
+      if (outputPath.trim()) {
+        // Validate path format
+        const trimmedPath = outputPath.trim();
+        if (trimmedPath.includes("\0") || trimmedPath.length > 255) {
+          console.log("⚠️  Invalid path format. Using default (./reports)");
+        } else {
+          await this.configManager.saveConfig({ outputPath: trimmedPath });
+        }
+      }
+    } catch (error: any) {
+      console.log(
+        "⚠️  Error during optional configuration setup. Using defaults."
+      );
     }
   }
 

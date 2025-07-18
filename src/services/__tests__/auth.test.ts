@@ -60,6 +60,7 @@ describe("AuthenticationService", () => {
 
     it("should handle 401 unauthorized error", async () => {
       const error = {
+        isAxiosError: true,
         response: {
           status: 401,
           statusText: "Unauthorized",
@@ -72,15 +73,19 @@ describe("AuthenticationService", () => {
 
       expect(result.isValid).toBe(false);
       expect(result.error).toBe(
-        "Invalid GitHub token. Please check your token and try again."
+        "GitHub authentication failed. Your token is invalid or expired."
       );
     });
 
     it("should handle 403 forbidden error", async () => {
       const error = {
+        isAxiosError: true,
         response: {
           status: 403,
           statusText: "Forbidden",
+          headers: {
+            "x-ratelimit-remaining": "100", // Not rate limited
+          },
         },
       };
 
@@ -90,7 +95,7 @@ describe("AuthenticationService", () => {
 
       expect(result.isValid).toBe(false);
       expect(result.error).toBe(
-        "GitHub token lacks required permissions or rate limit exceeded."
+        "GitHub access forbidden. Your token may lack required permissions."
       );
     });
 
@@ -105,7 +110,7 @@ describe("AuthenticationService", () => {
 
       expect(result.isValid).toBe(false);
       expect(result.error).toBe(
-        "Request timeout. Please check your network connection."
+        "Request timed out. The GitHub API is taking too long to respond."
       );
     });
 
@@ -120,7 +125,7 @@ describe("AuthenticationService", () => {
 
       expect(result.isValid).toBe(false);
       expect(result.error).toBe(
-        "Network error. Please check your internet connection."
+        "Network connection failed. Unable to reach GitHub API."
       );
     });
   });
@@ -157,6 +162,7 @@ describe("AuthenticationService", () => {
 
     it("should handle 404 repository not found", async () => {
       const error = {
+        isAxiosError: true,
         response: {
           status: 404,
           statusText: "Not Found",
@@ -171,13 +177,12 @@ describe("AuthenticationService", () => {
       );
 
       expect(result.hasAccess).toBe(false);
-      expect(result.error).toBe(
-        "Repository not found. Please check the repository name and your access permissions."
-      );
+      expect(result.error).toBe("Repository not found: owner/nonexistent");
     });
 
     it("should handle 403 access denied", async () => {
       const error = {
+        isAxiosError: true,
         response: {
           status: 403,
           statusText: "Forbidden",
@@ -192,9 +197,7 @@ describe("AuthenticationService", () => {
       );
 
       expect(result.hasAccess).toBe(false);
-      expect(result.error).toBe(
-        "Access denied. You may not have permission to access this repository."
-      );
+      expect(result.error).toBe("Access denied to repository: private/repo");
     });
   });
 

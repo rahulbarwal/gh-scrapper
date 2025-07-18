@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from "axios";
+import { ErrorHandler, ErrorContext } from "./error-handler";
 
 export interface AuthValidationResult {
   isValid: boolean;
@@ -33,6 +34,10 @@ export class AuthenticationService {
    * Validate GitHub token by testing authentication with GitHub API
    */
   async validateToken(token: string): Promise<AuthValidationResult> {
+    const context: ErrorContext = {
+      operation: "validating GitHub token",
+    };
+
     try {
       // Test authentication by getting user info
       const response = await this.client.get("/user", {
@@ -63,34 +68,12 @@ export class AuthenticationService {
         rateLimit,
       };
     } catch (error: any) {
-      let errorMessage = "Unknown authentication error";
-
-      if (error.response) {
-        switch (error.response.status) {
-          case 401:
-            errorMessage =
-              "Invalid GitHub token. Please check your token and try again.";
-            break;
-          case 403:
-            errorMessage =
-              "GitHub token lacks required permissions or rate limit exceeded.";
-            break;
-          case 404:
-            errorMessage =
-              "GitHub API endpoint not found. Please check your network connection.";
-            break;
-          default:
-            errorMessage = `GitHub API error: ${error.response.status} - ${error.response.statusText}`;
-        }
-      } else if (error.code === "ECONNABORTED") {
-        errorMessage = "Request timeout. Please check your network connection.";
-      } else if (error.code === "ENOTFOUND" || error.code === "ECONNREFUSED") {
-        errorMessage = "Network error. Please check your internet connection.";
-      }
+      // Use centralized error handling
+      const scraperError = ErrorHandler.convertToScraperError(error, context);
 
       return {
         isValid: false,
-        error: errorMessage,
+        error: scraperError.message,
       };
     }
   }
@@ -102,14 +85,31 @@ export class AuthenticationService {
     token: string,
     repository: string
   ): Promise<{ hasAccess: boolean; error?: string }> {
+    const context: ErrorContext = {
+      operation: "testing repository access",
+      repository,
+    };
+
     try {
       // Extract owner and repo from repository string (e.g., "owner/repo")
       const [owner, repo] = repository.split("/");
 
       if (!owner || !repo) {
+        const validationError = ErrorHandler.handleValidationError(
+          "Invalid repository format. Expected format: owner/repository",
+          context,
+          [
+            {
+              action: "Check repository format",
+              description:
+                "Repository should be in format 'owner/repository-name'",
+              priority: "high",
+            },
+          ]
+        );
         return {
           hasAccess: false,
-          error: "Invalid repository format. Expected format: owner/repository",
+          error: validationError.message,
         };
       }
 
@@ -121,30 +121,12 @@ export class AuthenticationService {
 
       return { hasAccess: true };
     } catch (error: any) {
-      let errorMessage = "Unknown repository access error";
-
-      if (error.response) {
-        switch (error.response.status) {
-          case 401:
-            errorMessage =
-              "Authentication failed. Please check your GitHub token.";
-            break;
-          case 403:
-            errorMessage =
-              "Access denied. You may not have permission to access this repository.";
-            break;
-          case 404:
-            errorMessage =
-              "Repository not found. Please check the repository name and your access permissions.";
-            break;
-          default:
-            errorMessage = `Repository access error: ${error.response.status} - ${error.response.statusText}`;
-        }
-      }
+      // Use centralized error handling
+      const scraperError = ErrorHandler.convertToScraperError(error, context);
 
       return {
         hasAccess: false,
-        error: errorMessage,
+        error: scraperError.message,
       };
     }
   }

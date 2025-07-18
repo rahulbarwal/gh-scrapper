@@ -26,3 +26,10 @@ export {
   type ReportMetadata,
   type ReportGenerationOptions,
 } from "./report-generator";
+export {
+  ErrorHandler,
+  ScraperError,
+  ErrorType,
+  type ErrorContext,
+  type ErrorSuggestion,
+} from "./error-handler";

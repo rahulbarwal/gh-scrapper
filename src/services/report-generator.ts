@@ -1,6 +1,7 @@
 import { GitHubIssue, Config } from "../models";
 import * as fs from "fs-extra";
 import * as path from "path";
+import { ErrorHandler, ErrorContext } from "./error-handler";
 
 export interface ReportMetadata {
   repositoryName: string;
@@ -66,24 +67,147 @@ export class ReportGenerator {
   }
 
   /**
-   * Save report to file with proper naming convention
+   * Save report to file with proper naming convention and comprehensive error handling
    */
   async saveReport(
     report: string,
     metadata: ReportMetadata,
     outputPath: string
   ): Promise<string> {
-    // Ensure output directory exists
-    await fs.ensureDir(outputPath);
-
-    // Generate filename based on repository and product area
     const filename = this.generateFilename(metadata);
     const fullPath = path.join(outputPath, filename);
 
-    // Write report to file
-    await fs.writeFile(fullPath, report, "utf8");
+    const context: ErrorContext = {
+      operation: "saving report to file",
+      filePath: fullPath,
+      repository: metadata.repositoryName,
+      productArea: metadata.productArea,
+    };
 
-    return fullPath;
+    return ErrorHandler.executeWithRetry(async () => {
+      try {
+        // Validate inputs
+        if (!report || typeof report !== "string") {
+          throw ErrorHandler.handleValidationError(
+            "Invalid report content provided",
+            context,
+            [
+              {
+                action: "Check report generation",
+                description: "Ensure the report was generated successfully",
+                priority: "high",
+              },
+            ]
+          );
+        }
+
+        if (!outputPath || typeof outputPath !== "string") {
+          throw ErrorHandler.handleValidationError(
+            "Invalid output path provided",
+            context,
+            [
+              {
+                action: "Specify valid output path",
+                description:
+                  "Provide a valid directory path for saving the report",
+                priority: "high",
+              },
+            ]
+          );
+        }
+
+        // Check if output path is writable
+        try {
+          await fs.access(path.dirname(outputPath), fs.constants.W_OK);
+        } catch (accessError: any) {
+          if (accessError.code === "ENOENT") {
+            // Directory doesn't exist, try to create it
+            await fs.ensureDir(outputPath);
+          } else {
+            throw accessError;
+          }
+        }
+
+        // Ensure output directory exists
+        await fs.ensureDir(outputPath);
+
+        // Check available disk space (basic check)
+        const stats = await fs.stat(outputPath);
+        if (!stats.isDirectory()) {
+          throw ErrorHandler.handleValidationError(
+            "Output path is not a directory",
+            context,
+            [
+              {
+                action: "Use directory path",
+                description: "Specify a directory path, not a file path",
+                priority: "high",
+              },
+            ]
+          );
+        }
+
+        // Write report to file with atomic operation (write to temp file first)
+        const tempPath = fullPath + ".tmp";
+        await fs.writeFile(tempPath, report, "utf8");
+
+        // Move temp file to final location (atomic operation)
+        await fs.move(tempPath, fullPath, { overwrite: true });
+
+        // Verify file was written correctly
+        const writtenContent = await fs.readFile(fullPath, "utf8");
+        if (writtenContent.length !== report.length) {
+          throw new Error(
+            "File write verification failed - content length mismatch"
+          );
+        }
+
+        return fullPath;
+      } catch (error: any) {
+        // Clean up temp file if it exists
+        const tempPath = fullPath + ".tmp";
+        try {
+          await fs.remove(tempPath);
+        } catch (cleanupError) {
+          // Ignore cleanup errors
+        }
+
+        throw ErrorHandler.convertToScraperError(error, context);
+      }
+    }, context);
+  }
+
+  /**
+   * Validate report content before saving
+   */
+  validateReportContent(report: string): {
+    isValid: boolean;
+    errors: string[];
+  } {
+    const errors: string[] = [];
+
+    if (!report || typeof report !== "string") {
+      errors.push("Report content is empty or invalid");
+      return { isValid: false, errors };
+    }
+
+    if (report.trim().length === 0) {
+      errors.push("Report content is empty");
+    }
+
+    if (report.length < 100) {
+      errors.push("Report content seems too short (less than 100 characters)");
+    }
+
+    if (!report.includes("# GitHub Issues Report")) {
+      errors.push("Report doesn't contain expected header format");
+    }
+
+    if (!report.includes("## Summary")) {
+      errors.push("Report doesn't contain summary section");
+    }
+
+    return { isValid: errors.length === 0, errors };
   }
 
   /**

@@ -1,5 +1,6 @@
 import { RelevanceFilter } from "../relevance-filter";
 import { GitHubIssue } from "../../models";
+import { ScraperError } from "../error-handler";
 
 describe("RelevanceFilter", () => {
   let filter: RelevanceFilter;
@@ -266,14 +267,15 @@ describe("RelevanceFilter", () => {
       expect(filtered.length).toBeLessThanOrEqual(2);
     });
 
-    it("should return empty array when no issues meet threshold", () => {
+    it("should throw ScraperError when no issues meet threshold", () => {
       const options = {
         productArea: "completely unrelated topic",
         minRelevanceScore: 0.5,
       };
 
-      const filtered = filter.filterIssues(mockIssues, options);
-      expect(filtered).toHaveLength(0);
+      expect(() => filter.filterIssues(mockIssues, options)).toThrow(
+        "No relevant issues found"
+      );
     });
 
     it("should assign relevance scores to all filtered issues", () => {
@@ -292,15 +294,58 @@ describe("RelevanceFilter", () => {
     });
   });
 
-  describe("edge cases", () => {
-    it("should handle empty issues array", () => {
+  describe("filterIssuesWithFallback", () => {
+    it("should return issues when results are found", () => {
       const options = {
         productArea: "authentication",
         minRelevanceScore: 0,
       };
 
-      const filtered = filter.filterIssues([], options);
-      expect(filtered).toHaveLength(0);
+      const result = filter.filterIssuesWithFallback(mockIssues, options);
+
+      expect(result.hasResults).toBe(true);
+      expect(result.issues.length).toBeGreaterThan(0);
+      expect(result.suggestions).toBeUndefined();
+    });
+
+    it("should return suggestions when no results are found", () => {
+      const options = {
+        productArea: "completely unrelated topic",
+        minRelevanceScore: 0.9,
+      };
+
+      const result = filter.filterIssuesWithFallback(mockIssues, options);
+
+      expect(result.hasResults).toBe(false);
+      expect(result.issues).toHaveLength(0);
+      expect(result.suggestions).toBeDefined();
+      expect(result.suggestions!.length).toBeGreaterThan(0);
+    });
+
+    it("should provide helpful suggestions for empty results", () => {
+      const options = {
+        productArea: "nonexistent feature",
+        minRelevanceScore: 0.8,
+      };
+
+      const result = filter.filterIssuesWithFallback(mockIssues, options);
+
+      expect(result.suggestions).toContain(
+        expect.stringContaining("Lower relevance threshold")
+      );
+    });
+  });
+
+  describe("edge cases", () => {
+    it("should throw ScraperError for empty issues array", () => {
+      const options = {
+        productArea: "authentication",
+        minRelevanceScore: 0,
+      };
+
+      expect(() => filter.filterIssues([], options)).toThrow(
+        "No relevant issues found"
+      );
     });
 
     it("should handle issues with empty descriptions", () => {

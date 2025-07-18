@@ -1,5 +1,11 @@
 import axios, { AxiosInstance, AxiosResponse } from "axios";
 import { GitHubIssue, Comment } from "../models";
+import {
+  ErrorHandler,
+  ScraperError,
+  ErrorType,
+  ErrorContext,
+} from "./error-handler";
 
 export interface GitHubApiIssue {
   id: number;
@@ -91,24 +97,29 @@ export class GitHubClient {
     filters: IssueFilters = {},
     pagination: PaginationOptions = {}
   ): Promise<GitHubIssue[]> {
-    const [owner, repo] = this.parseRepository(repository);
-    const issues: GitHubIssue[] = [];
+    const context: ErrorContext = {
+      operation: "fetching repository issues",
+      repository,
+    };
 
-    const { page = 1, perPage = 100, maxPages = 10 } = pagination;
+    return ErrorHandler.executeWithRetry(async () => {
+      const [owner, repo] = this.parseRepository(repository);
+      const issues: GitHubIssue[] = [];
 
-    const {
-      state = "open",
-      labels,
-      sort = "updated",
-      direction = "desc",
-      since,
-    } = filters;
+      const { page = 1, perPage = 100, maxPages = 10 } = pagination;
 
-    let currentPage = page;
-    let hasNextPage = true;
+      const {
+        state = "open",
+        labels,
+        sort = "updated",
+        direction = "desc",
+        since,
+      } = filters;
 
-    while (hasNextPage && currentPage <= maxPages) {
-      try {
+      let currentPage = page;
+      let hasNextPage = true;
+
+      while (hasNextPage && currentPage <= maxPages) {
         const params: any = {
           state,
           sort,
@@ -125,7 +136,28 @@ export class GitHubClient {
           { params }
         );
 
-        const pageIssues = response.data.map(this.transformIssue);
+        // Transform issues with error handling for malformed data
+        const pageIssues: GitHubIssue[] = [];
+        for (const apiIssue of response.data) {
+          try {
+            pageIssues.push(this.transformIssue(apiIssue));
+          } catch (error) {
+            // Handle malformed issue data gracefully
+            const parseContext: ErrorContext = {
+              operation: "parsing issue data",
+              repository,
+              issueId: apiIssue.id,
+            };
+            console.warn(
+              ErrorHandler.formatError(
+                ErrorHandler.handleParsingError(error, parseContext, apiIssue),
+                false
+              )
+            );
+            // Continue processing other issues
+          }
+        }
+
         issues.push(...pageIssues);
 
         // Check if there are more pages
@@ -136,12 +168,10 @@ export class GitHubClient {
         if (issues.length > 0 && issues.length % 100 === 0) {
           console.log(`Fetched ${issues.length} issues...`);
         }
-      } catch (error) {
-        throw this.handleApiError(error, `fetching issues for ${repository}`);
       }
-    }
 
-    return issues;
+      return issues;
+    }, context);
   }
 
   /**
@@ -151,14 +181,20 @@ export class GitHubClient {
     repository: string,
     issueNumber: number
   ): Promise<Comment[]> {
-    const [owner, repo] = this.parseRepository(repository);
-    const comments: Comment[] = [];
+    const context: ErrorContext = {
+      operation: "fetching issue comments",
+      repository,
+      issueId: issueNumber,
+    };
 
-    let page = 1;
-    let hasNextPage = true;
+    return ErrorHandler.executeWithRetry(async () => {
+      const [owner, repo] = this.parseRepository(repository);
+      const comments: Comment[] = [];
 
-    while (hasNextPage) {
-      try {
+      let page = 1;
+      let hasNextPage = true;
+
+      while (hasNextPage) {
         const response = await this.makeRequest<GitHubApiComment[]>(
           `/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
           {
@@ -169,27 +205,49 @@ export class GitHubClient {
           }
         );
 
-        const pageComments = response.data.map(this.transformComment);
-        comments.push(...pageComments);
+        // Transform comments with error handling for malformed data
+        for (const apiComment of response.data) {
+          try {
+            comments.push(this.transformComment(apiComment));
+          } catch (error) {
+            // Handle malformed comment data gracefully
+            const parseContext: ErrorContext = {
+              operation: "parsing comment data",
+              repository,
+              issueId: issueNumber,
+              additionalInfo: { commentId: apiComment.id },
+            };
+            console.warn(
+              ErrorHandler.formatError(
+                ErrorHandler.handleParsingError(
+                  error,
+                  parseContext,
+                  apiComment
+                ),
+                false
+              )
+            );
+            // Continue processing other comments
+          }
+        }
 
         hasNextPage = response.data.length === 100;
         page++;
-      } catch (error) {
-        throw this.handleApiError(
-          error,
-          `fetching comments for issue #${issueNumber} in ${repository}`
-        );
       }
-    }
 
-    return comments;
+      return comments;
+    }, context);
   }
 
   /**
    * Get current rate limit information
    */
   async getRateLimitInfo(): Promise<RateLimitInfo> {
-    try {
+    const context: ErrorContext = {
+      operation: "fetching rate limit information",
+    };
+
+    return ErrorHandler.executeWithRetry(async () => {
       const response = await this.makeRequest<any>("/rate_limit");
       const rateLimit = response.data.rate;
 
@@ -198,55 +256,91 @@ export class GitHubClient {
         remaining: rateLimit.remaining,
         reset: new Date(rateLimit.reset * 1000),
       };
-    } catch (error) {
-      throw this.handleApiError(error, "fetching rate limit information");
-    }
+    }, context);
   }
 
   /**
-   * Make authenticated request with error handling
+   * Make authenticated request with comprehensive error handling
    */
   private async makeRequest<T>(
     url: string,
-    config: any = {},
-    retryCount = 0
+    config: any = {}
   ): Promise<AxiosResponse<T>> {
-    try {
-      return await this.client.request<T>({
-        url,
-        method: "GET",
-        ...config,
-      });
-    } catch (error: any) {
-      // Handle rate limiting with exponential backoff
-      if (
-        error.response?.status === 403 &&
-        this.isRateLimited(error.response)
-      ) {
-        if (retryCount < this.maxRetries) {
-          await this.waitForRateLimit(error.response, retryCount);
-          return this.makeRequest<T>(url, config, retryCount + 1);
+    const context: ErrorContext = {
+      operation: `making API request to ${url}`,
+    };
+
+    return ErrorHandler.executeWithRetry(async () => {
+      try {
+        // Add request validation
+        if (!url || typeof url !== "string") {
+          throw ErrorHandler.handleValidationError(
+            "Invalid URL provided for API request",
+            context,
+            [
+              {
+                action: "Check URL format",
+                description: "Ensure the API endpoint URL is valid",
+                priority: "high",
+              },
+            ]
+          );
         }
-      }
 
-      // Handle other retryable errors (network issues, temporary server errors)
-      if (this.isRetryableError(error) && retryCount < this.maxRetries) {
-        const delay = this.calculateBackoffDelay(retryCount);
-        console.log(
-          `Request failed, retrying in ${delay}ms... (attempt ${
-            retryCount + 1
-          }/${this.maxRetries})`
-        );
-        await this.sleep(delay);
-        return this.makeRequest<T>(url, config, retryCount + 1);
-      }
+        // Add timeout and retry configuration
+        const requestConfig = {
+          url,
+          method: "GET",
+          timeout: 30000, // 30 second timeout
+          ...config,
+        };
 
-      throw error;
-    }
+        return await this.client.request<T>(requestConfig);
+      } catch (error: any) {
+        // Add specific handling for common GitHub API errors
+        if (error.response?.status === 422) {
+          // Unprocessable Entity - often validation errors
+          throw ErrorHandler.handleValidationError(
+            `GitHub API validation error: ${
+              error.response.data?.message || "Invalid request parameters"
+            }`,
+            context,
+            [
+              {
+                action: "Check request parameters",
+                description: "Verify that all request parameters are valid",
+                priority: "high",
+              },
+              {
+                action: "Check API documentation",
+                description:
+                  "Refer to GitHub API documentation for correct parameter format",
+                priority: "medium",
+              },
+            ]
+          );
+        }
+
+        // Convert to ScraperError for consistent handling
+        throw ErrorHandler.convertToScraperError(error, context);
+      }
+    }, context);
   }
 
   /**
-   * Handle rate limiting by waiting for reset or using exponential backoff
+   * Check if error is rate limiting (used by interceptor)
+   */
+  private isRateLimited(response: any): boolean {
+    return (
+      response.headers["x-ratelimit-remaining"] === "0" ||
+      (response.data &&
+        response.data.message &&
+        response.data.message.toLowerCase().includes("rate limit"))
+    );
+  }
+
+  /**
+   * Handle rate limiting by waiting for reset (used by interceptor)
    */
   private async handleRateLimit(error: any): Promise<any> {
     const resetTime = error.response.headers["x-ratelimit-reset"];
@@ -269,71 +363,6 @@ export class GitHubClient {
     }
 
     throw error;
-  }
-
-  /**
-   * Wait for rate limit reset or apply exponential backoff
-   */
-  private async waitForRateLimit(
-    response: any,
-    retryCount: number
-  ): Promise<void> {
-    const resetTime = response.headers["x-ratelimit-reset"];
-    const remaining = response.headers["x-ratelimit-remaining"];
-
-    if (remaining === "0" && resetTime) {
-      const resetDate = new Date(parseInt(resetTime, 10) * 1000);
-      const waitTime = resetDate.getTime() - Date.now();
-
-      if (waitTime > 0 && waitTime < 3600000) {
-        // Don't wait more than 1 hour
-        console.log(
-          `Rate limit exceeded. Waiting ${Math.ceil(
-            waitTime / 1000
-          )} seconds until reset...`
-        );
-        await this.sleep(waitTime);
-        return;
-      }
-    }
-
-    // Fallback to exponential backoff
-    const delay = this.calculateBackoffDelay(retryCount);
-    console.log(`Rate limited, using exponential backoff: ${delay}ms`);
-    await this.sleep(delay);
-  }
-
-  /**
-   * Calculate exponential backoff delay
-   */
-  private calculateBackoffDelay(retryCount: number): number {
-    return this.baseDelay * Math.pow(2, retryCount) + Math.random() * 1000;
-  }
-
-  /**
-   * Check if error is rate limiting
-   */
-  private isRateLimited(response: any): boolean {
-    return (
-      response.headers["x-ratelimit-remaining"] === "0" ||
-      (response.data &&
-        response.data.message &&
-        response.data.message.toLowerCase().includes("rate limit"))
-    );
-  }
-
-  /**
-   * Check if error is retryable
-   */
-  private isRetryableError(error: any): boolean {
-    if (!error.response) {
-      // Network errors are retryable
-      return true;
-    }
-
-    const status = error.response.status;
-    // Retry on server errors and some client errors
-    return status >= 500 || status === 408 || status === 429;
   }
 
   /**
@@ -405,46 +434,4 @@ export class GitHubClient {
       authorType,
     };
   };
-
-  /**
-   * Handle API errors and provide meaningful error messages
-   */
-  private handleApiError(error: any, context: string): GitHubApiError {
-    if (!error.response) {
-      return new GitHubApiError(
-        `Network error while ${context}: ${error.message}`
-      );
-    }
-
-    const status = error.response.status;
-    const data = error.response.data;
-
-    let message: string;
-    switch (status) {
-      case 401:
-        message = `Authentication failed while ${context}. Please check your GitHub token.`;
-        break;
-      case 403:
-        if (this.isRateLimited(error.response)) {
-          message = `Rate limit exceeded while ${context}. Please wait before retrying.`;
-        } else {
-          message = `Access forbidden while ${context}. You may not have permission to access this resource.`;
-        }
-        break;
-      case 404:
-        message = `Resource not found while ${context}. Please check the repository name and your access permissions.`;
-        break;
-      case 422:
-        message = `Invalid request while ${context}: ${
-          data?.message || "Validation failed"
-        }`;
-        break;
-      default:
-        message = `GitHub API error while ${context}: ${status} - ${
-          data?.message || error.response.statusText
-        }`;
-    }
-
-    return new GitHubApiError(message, status, error.response);
-  }
 }

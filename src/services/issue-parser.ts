@@ -1,4 +1,5 @@
 import { GitHubIssue, Comment, Workaround } from "../models";
+import { ErrorHandler, ErrorContext } from "./error-handler";
 
 export interface ParsedIssueContent {
   title: string;
@@ -64,30 +65,92 @@ export class IssueParser {
    * Parse issue content and extract structured information
    */
   parseIssueContent(issue: GitHubIssue): ParsedIssueContent {
-    return {
-      title: this.cleanText(issue.title),
-      description: this.cleanText(issue.description),
-      labels: issue.labels,
-      metadata: {
-        id: issue.id,
-        state: issue.state,
-        createdAt: issue.createdAt,
-        updatedAt: issue.updatedAt,
-        author: issue.author,
-        url: issue.url,
-        commentCount: issue.comments.length,
-      },
+    const context: ErrorContext = {
+      operation: "parsing issue content",
+      issueId: issue.id,
     };
+
+    try {
+      return {
+        title: this.cleanText(issue.title || ""),
+        description: this.cleanText(issue.description || ""),
+        labels: Array.isArray(issue.labels) ? issue.labels : [],
+        metadata: {
+          id: issue.id || 0,
+          state: issue.state || "open",
+          createdAt: issue.createdAt || new Date(),
+          updatedAt: issue.updatedAt || new Date(),
+          author: issue.author || "unknown",
+          url: issue.url || "",
+          commentCount: Array.isArray(issue.comments)
+            ? issue.comments.length
+            : 0,
+        },
+      };
+    } catch (error: any) {
+      throw ErrorHandler.handleParsingError(error, context, issue);
+    }
+  }
+
+  /**
+   * Parse issue content with graceful error handling
+   */
+  parseIssueContentSafely(issue: any): ParsedIssueContent | null {
+    try {
+      // Validate required fields
+      if (!issue || typeof issue !== "object") {
+        return null;
+      }
+
+      return this.parseIssueContent(issue as GitHubIssue);
+    } catch (error: any) {
+      console.warn(
+        `Failed to parse issue ${issue?.id || "unknown"}: ${error.message}`
+      );
+      return null;
+    }
   }
 
   /**
    * Analyze comments to identify workaround patterns
    */
   analyzeComments(comments: Comment[]): Comment[] {
-    return comments.map((comment) => ({
-      ...comment,
-      isWorkaround: this.isWorkaroundComment(comment),
-    }));
+    if (!Array.isArray(comments)) {
+      console.warn("Invalid comments data provided, expected array");
+      return [];
+    }
+
+    return comments
+      .filter((comment) => {
+        // Filter out malformed comments
+        if (!comment || typeof comment !== "object") {
+          console.warn(
+            `Skipping malformed comment: ${JSON.stringify(comment)}`
+          );
+          return false;
+        }
+        if (!comment.body || typeof comment.body !== "string") {
+          console.warn(`Skipping comment with invalid body: ${comment.id}`);
+          return false;
+        }
+        return true;
+      })
+      .map((comment) => {
+        try {
+          return {
+            ...comment,
+            isWorkaround: this.isWorkaroundComment(comment),
+          };
+        } catch (error: any) {
+          console.warn(
+            `Error analyzing comment ${comment.id}: ${error.message}`
+          );
+          return {
+            ...comment,
+            isWorkaround: false, // Default to false on error
+          };
+        }
+      });
   }
 
   /**
@@ -120,57 +183,139 @@ export class IssueParser {
       includeMetrics: true,
     }
   ): string {
-    const parts: string[] = [];
-
-    // Calculate space allocation
-    let remainingLength = options.maxLength;
-
-    // Add label information first (shorter, fixed length)
-    if (options.includeLabels && issue.labels.length > 0) {
-      const labelText = `Tagged as: ${issue.labels.join(", ")}`;
-      parts.push(labelText);
-      remainingLength -= labelText.length + 2; // +2 for ". " separator
-    }
-
-    // Add metrics and activity info
-    if (options.includeMetrics) {
-      const metrics: string[] = [];
-
-      if (issue.comments.length > 0) {
-        metrics.push(`${issue.comments.length} comments`);
+    try {
+      // Validate input data
+      if (!issue || typeof issue !== "object") {
+        console.warn("Invalid issue data provided for summary generation");
+        return "Unable to generate summary: invalid issue data";
       }
 
-      if (issue.workarounds.length > 0) {
-        metrics.push(`${issue.workarounds.length} workarounds available`);
+      // Validate and sanitize options
+      const safeOptions = {
+        maxLength: Math.max(50, Math.min(1000, options.maxLength || 200)),
+        includeLabels: Boolean(options.includeLabels),
+        includeMetrics: Boolean(options.includeMetrics),
+      };
+
+      const parts: string[] = [];
+      let remainingLength = safeOptions.maxLength;
+
+      // Add label information first (shorter, fixed length)
+      if (
+        safeOptions.includeLabels &&
+        Array.isArray(issue.labels) &&
+        issue.labels.length > 0
+      ) {
+        try {
+          const validLabels = issue.labels.filter(
+            (label) => typeof label === "string" && label.trim().length > 0
+          );
+          if (validLabels.length > 0) {
+            const labelText = `Tagged as: ${validLabels.join(", ")}`;
+            parts.push(labelText);
+            remainingLength -= labelText.length + 2; // +2 for ". " separator
+          }
+        } catch (error: any) {
+          console.warn(
+            `Error processing labels for issue ${issue.id}: ${error.message}`
+          );
+        }
       }
 
-      const daysSinceCreated = Math.floor(
-        (Date.now() - issue.createdAt.getTime()) / (1000 * 60 * 60 * 24)
+      // Add metrics and activity info
+      if (safeOptions.includeMetrics) {
+        try {
+          const metrics: string[] = [];
+
+          // Safely get comment count
+          const commentCount = Array.isArray(issue.comments)
+            ? issue.comments.length
+            : 0;
+          if (commentCount > 0) {
+            metrics.push(`${commentCount} comments`);
+          }
+
+          // Safely get workaround count
+          const workaroundCount = Array.isArray(issue.workarounds)
+            ? issue.workarounds.length
+            : 0;
+          if (workaroundCount > 0) {
+            metrics.push(`${workaroundCount} workarounds available`);
+          }
+
+          // Safely calculate days since creation
+          try {
+            const createdAt =
+              issue.createdAt instanceof Date
+                ? issue.createdAt
+                : new Date(issue.createdAt);
+            if (!isNaN(createdAt.getTime())) {
+              const daysSinceCreated = Math.floor(
+                (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
+              );
+              if (daysSinceCreated >= 0 && daysSinceCreated < 10000) {
+                // Reasonable range
+                metrics.push(`${daysSinceCreated} days old`);
+              }
+            }
+          } catch (dateError: any) {
+            console.warn(
+              `Error calculating age for issue ${issue.id}: ${dateError.message}`
+            );
+          }
+
+          if (metrics.length > 0) {
+            const activityText = `Activity: ${metrics.join(", ")}`;
+            parts.push(activityText);
+            remainingLength -= activityText.length + 2; // +2 for ". " separator
+          }
+        } catch (error: any) {
+          console.warn(
+            `Error processing metrics for issue ${issue.id}: ${error.message}`
+          );
+        }
+      }
+
+      // Use remaining space for description summary
+      if (
+        remainingLength > 20 &&
+        issue.description &&
+        typeof issue.description === "string"
+      ) {
+        try {
+          const descriptionSummary = this.summarizeText(
+            issue.description,
+            Math.max(remainingLength - 2, 20)
+          );
+          if (descriptionSummary && descriptionSummary.trim().length > 0) {
+            parts.unshift(descriptionSummary); // Add at beginning
+          }
+        } catch (error: any) {
+          console.warn(
+            `Error summarizing description for issue ${issue.id}: ${error.message}`
+          );
+        }
+      }
+
+      const result = parts.join(". ");
+
+      // Final validation and truncation
+      if (result.length > safeOptions.maxLength) {
+        return result.substring(0, safeOptions.maxLength - 3) + "...";
+      }
+
+      return (
+        result ||
+        `Issue #${issue.id || "unknown"}: ${
+          issue.title || "No title available"
+        }`
       );
-      metrics.push(`${daysSinceCreated} days old`);
-
-      if (metrics.length > 0) {
-        const activityText = `Activity: ${metrics.join(", ")}`;
-        parts.push(activityText);
-        remainingLength -= activityText.length + 2; // +2 for ". " separator
-      }
-    }
-
-    // Use remaining space for description summary
-    if (remainingLength > 20 && issue.description) {
-      const descriptionSummary = this.summarizeText(
-        issue.description,
-        Math.max(remainingLength - 2, 20)
+    } catch (error: any) {
+      console.warn(
+        `Error generating summary for issue ${issue?.id}: ${error.message}`
       );
-      if (descriptionSummary) {
-        parts.unshift(descriptionSummary); // Add at beginning
-      }
+      return `Issue #${issue?.id || "unknown"}: Summary generation failed`;
     }
-
-    const result = parts.join(". ");
-    return result.length > options.maxLength
-      ? result.substring(0, options.maxLength - 3) + "..."
-      : result;
   }
 
   /**

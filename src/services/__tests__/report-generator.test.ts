@@ -374,4 +374,238 @@ describe("ReportGenerator", () => {
       expect(report).toContain("💡"); // suggested
     });
   });
+
+  describe("error handling", () => {
+    let mockFs: any;
+
+    beforeEach(() => {
+      // Mock fs-extra
+      mockFs = {
+        ensureDir: jest.fn(),
+        writeFile: jest.fn(),
+        access: jest.fn(),
+        stat: jest.fn(),
+        move: jest.fn(),
+        readFile: jest.fn(),
+        remove: jest.fn(),
+      };
+
+      // Replace fs-extra with mock
+      jest.doMock("fs-extra", () => mockFs);
+    });
+
+    afterEach(() => {
+      jest.clearAllMocks();
+      jest.resetModules();
+    });
+
+    it("should handle invalid report content", async () => {
+      await expect(
+        reportGenerator.saveReport("", mockMetadata, "./test-output")
+      ).rejects.toThrow("Invalid report content provided");
+    });
+
+    it("should handle invalid output path", async () => {
+      await expect(
+        reportGenerator.saveReport("valid report", mockMetadata, "")
+      ).rejects.toThrow("Invalid output path provided");
+    });
+
+    it("should validate report content correctly", () => {
+      const validReport = `# GitHub Issues Report: test - area
+
+## Summary
+
+Test content with sufficient length to pass validation checks.
+This report contains the expected structure and format.`;
+
+      const result = reportGenerator.validateReportContent(validReport);
+      expect(result.isValid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it("should detect invalid report content", () => {
+      const invalidReport = "Short";
+
+      const result = reportGenerator.validateReportContent(invalidReport);
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain(
+        "Report content seems too short (less than 100 characters)"
+      );
+      expect(result.errors).toContain(
+        "Report doesn't contain expected header format"
+      );
+      expect(result.errors).toContain("Report doesn't contain summary section");
+    });
+
+    it("should detect empty report content", () => {
+      const result = reportGenerator.validateReportContent("");
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain("Report content is empty or invalid");
+    });
+
+    it("should detect null or undefined report content", () => {
+      const result1 = reportGenerator.validateReportContent(null as any);
+      expect(result1.isValid).toBe(false);
+      expect(result1.errors).toContain("Report content is empty or invalid");
+
+      const result2 = reportGenerator.validateReportContent(undefined as any);
+      expect(result2.isValid).toBe(false);
+      expect(result2.errors).toContain("Report content is empty or invalid");
+    });
+
+    it("should handle file system permission errors gracefully", async () => {
+      const { ReportGenerator } = require("../report-generator");
+      const generator = new ReportGenerator();
+
+      // Mock fs operations to simulate permission error
+      const mockError = new Error("Permission denied");
+      (mockError as any).code = "EACCES";
+
+      mockFs.ensureDir.mockRejectedValue(mockError);
+
+      await expect(
+        generator.saveReport(
+          "valid report content",
+          mockMetadata,
+          "./test-output"
+        )
+      ).rejects.toThrow();
+    });
+
+    it("should handle disk space errors gracefully", async () => {
+      const { ReportGenerator } = require("../report-generator");
+      const generator = new ReportGenerator();
+
+      // Mock fs operations to simulate disk space error
+      const mockError = new Error("No space left on device");
+      (mockError as any).code = "ENOSPC";
+
+      mockFs.ensureDir.mockResolvedValue(undefined);
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.stat.mockResolvedValue({ isDirectory: () => true });
+      mockFs.writeFile.mockRejectedValue(mockError);
+
+      await expect(
+        generator.saveReport(
+          "valid report content",
+          mockMetadata,
+          "./test-output"
+        )
+      ).rejects.toThrow();
+    });
+
+    it("should handle directory creation errors", async () => {
+      const { ReportGenerator } = require("../report-generator");
+      const generator = new ReportGenerator();
+
+      // Mock fs operations to simulate directory creation failure
+      const mockError = new Error("Cannot create directory");
+      mockFs.ensureDir.mockRejectedValue(mockError);
+
+      await expect(
+        generator.saveReport(
+          "valid report content",
+          mockMetadata,
+          "./test-output"
+        )
+      ).rejects.toThrow();
+    });
+
+    it("should validate output path is a directory", async () => {
+      const { ReportGenerator } = require("../report-generator");
+      const generator = new ReportGenerator();
+
+      // Mock fs operations to simulate file instead of directory
+      mockFs.ensureDir.mockResolvedValue(undefined);
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.stat.mockResolvedValue({ isDirectory: () => false });
+
+      await expect(
+        generator.saveReport(
+          "valid report content",
+          mockMetadata,
+          "./test-file.txt"
+        )
+      ).rejects.toThrow("Output path is not a directory");
+    });
+
+    it("should perform atomic file operations", async () => {
+      const { ReportGenerator } = require("../report-generator");
+      const generator = new ReportGenerator();
+
+      const reportContent = "valid report content";
+
+      // Mock successful fs operations
+      mockFs.ensureDir.mockResolvedValue(undefined);
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.stat.mockResolvedValue({ isDirectory: () => true });
+      mockFs.writeFile.mockResolvedValue(undefined);
+      mockFs.move.mockResolvedValue(undefined);
+      mockFs.readFile.mockResolvedValue(reportContent);
+
+      const result = await generator.saveReport(
+        reportContent,
+        mockMetadata,
+        "./test-output"
+      );
+
+      expect(mockFs.writeFile).toHaveBeenCalledWith(
+        expect.stringContaining(".tmp"),
+        reportContent,
+        "utf8"
+      );
+      expect(mockFs.move).toHaveBeenCalledWith(
+        expect.stringContaining(".tmp"),
+        expect.stringContaining(".md"),
+        { overwrite: true }
+      );
+      expect(result).toContain(".md");
+    });
+
+    it("should clean up temp files on error", async () => {
+      const { ReportGenerator } = require("../report-generator");
+      const generator = new ReportGenerator();
+
+      // Mock fs operations to simulate error during move
+      mockFs.ensureDir.mockResolvedValue(undefined);
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.stat.mockResolvedValue({ isDirectory: () => true });
+      mockFs.writeFile.mockResolvedValue(undefined);
+      mockFs.move.mockRejectedValue(new Error("Move failed"));
+      mockFs.remove.mockResolvedValue(undefined);
+
+      await expect(
+        generator.saveReport(
+          "valid report content",
+          mockMetadata,
+          "./test-output"
+        )
+      ).rejects.toThrow();
+
+      expect(mockFs.remove).toHaveBeenCalledWith(
+        expect.stringContaining(".tmp")
+      );
+    });
+
+    it("should verify file write integrity", async () => {
+      const { ReportGenerator } = require("../report-generator");
+      const generator = new ReportGenerator();
+
+      const reportContent = "valid report content";
+
+      // Mock fs operations with content length mismatch
+      mockFs.ensureDir.mockResolvedValue(undefined);
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.stat.mockResolvedValue({ isDirectory: () => true });
+      mockFs.writeFile.mockResolvedValue(undefined);
+      mockFs.move.mockResolvedValue(undefined);
+      mockFs.readFile.mockResolvedValue("different content"); // Wrong content
+      mockFs.remove.mockResolvedValue(undefined);
+
+      await expect(
+        generator.saveReport(reportContent, mockMetadata, "./test-output")
+      ).rejects.toThrow("File write verification failed");
+    });
+  });
 });

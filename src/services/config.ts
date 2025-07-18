@@ -2,6 +2,7 @@ import * as fs from "fs-extra";
 import * as path from "path";
 import * as os from "os";
 import { Config } from "../models";
+import { ErrorHandler, ErrorContext } from "./error-handler";
 
 export class ConfigManager {
   private configPath: string;
@@ -20,38 +21,62 @@ export class ConfigManager {
    * Load configuration from file and environment variables
    */
   async loadConfig(): Promise<Partial<Config>> {
-    // Load from environment variables first
-    this.loadFromEnvironment();
+    const context: ErrorContext = {
+      operation: "loading configuration",
+      filePath: this.configPath,
+    };
 
-    // Load from config file if it exists
-    if (await fs.pathExists(this.configPath)) {
-      try {
-        const fileConfig = await fs.readJson(this.configPath);
-        this.config = { ...fileConfig, ...this.config }; // env vars take precedence
-      } catch (error) {
-        console.warn(
-          "Warning: Could not read config file, using environment variables only"
-        );
+    try {
+      // Load from environment variables first
+      this.loadFromEnvironment();
+
+      // Load from config file if it exists
+      if (await fs.pathExists(this.configPath)) {
+        try {
+          const fileConfig = await fs.readJson(this.configPath);
+          this.config = { ...fileConfig, ...this.config }; // env vars take precedence
+        } catch (error: any) {
+          // Use centralized error handling for file system errors
+          const scraperError = ErrorHandler.convertToScraperError(
+            error,
+            context
+          );
+          console.warn(
+            `Warning: Could not read config file (${scraperError.message}), using environment variables only`
+          );
+        }
       }
-    }
 
-    return this.config;
+      return this.config;
+    } catch (error: any) {
+      // Handle unexpected errors during config loading
+      throw ErrorHandler.convertToScraperError(error, context);
+    }
   }
 
   /**
    * Save configuration to file
    */
   async saveConfig(config: Partial<Config>): Promise<void> {
-    this.config = { ...this.config, ...config };
+    const context: ErrorContext = {
+      operation: "saving configuration",
+      filePath: this.configPath,
+    };
 
-    // Ensure config directory exists
-    await fs.ensureDir(path.dirname(this.configPath));
+    try {
+      this.config = { ...this.config, ...config };
 
-    // Save to file (excluding sensitive data that should be in env vars)
-    const configToSave = { ...this.config };
-    delete configToSave.githubToken; // Don't save token to file
+      // Ensure config directory exists
+      await fs.ensureDir(path.dirname(this.configPath));
 
-    await fs.writeJson(this.configPath, configToSave, { spaces: 2 });
+      // Save to file (excluding sensitive data that should be in env vars)
+      const configToSave = { ...this.config };
+      delete configToSave.githubToken; // Don't save token to file
+
+      await fs.writeJson(this.configPath, configToSave, { spaces: 2 });
+    } catch (error: any) {
+      throw ErrorHandler.convertToScraperError(error, context);
+    }
   }
 
   /**
