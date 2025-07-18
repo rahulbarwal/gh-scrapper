@@ -70,7 +70,7 @@
   - Add validation for empty results with suggestions for broader searches
   - _Requirements: 3.3, 3.4, 5.4_
 
-- [ ] 9. Create unit tests for core functionality
+- [x] 9. Create unit tests for core functionality
 
   - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
   - Write tests for GitHub API client with mocked responses

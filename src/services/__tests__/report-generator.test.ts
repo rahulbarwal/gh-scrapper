@@ -388,6 +388,11 @@ describe("ReportGenerator", () => {
         move: jest.fn(),
         readFile: jest.fn(),
         remove: jest.fn(),
+        constants: {
+          W_OK: 2,
+          R_OK: 4,
+          F_OK: 0,
+        },
       };
 
       // Replace fs-extra with mock

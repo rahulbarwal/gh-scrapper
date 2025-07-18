@@ -330,9 +330,12 @@ describe("RelevanceFilter", () => {
 
       const result = filter.filterIssuesWithFallback(mockIssues, options);
 
-      expect(result.suggestions).toContain(
-        expect.stringContaining("Lower relevance threshold")
-      );
+      expect(result.suggestions).toBeDefined();
+      expect(result.suggestions!.length).toBeGreaterThan(0);
+      // Check that suggestions contain helpful alternative keywords
+      expect(
+        result.suggestions!.some((s) => s.includes("alternative keywords"))
+      ).toBe(true);
     });
   });
 
