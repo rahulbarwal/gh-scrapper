@@ -21,3 +21,8 @@ export {
   type WorkaroundPattern,
   type SummaryOptions,
 } from "./issue-parser";
+export {
+  ReportGenerator,
+  type ReportMetadata,
+  type ReportGenerationOptions,
+} from "./report-generator";
