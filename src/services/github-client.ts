@@ -391,6 +391,7 @@ export class GitHubClient {
   private transformIssue = (apiIssue: GitHubApiIssue): GitHubIssue => {
     return {
       id: apiIssue.id,
+      number: apiIssue.number,
       title: apiIssue.title,
       description: apiIssue.body || "",
       labels: apiIssue.labels.map((label) => label.name),

@@ -1,5 +1,6 @@
 export interface GitHubIssue {
   id: number;
+  number: number;
   title: string;
   description: string;
   labels: string[];

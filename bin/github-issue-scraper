@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+
+// Simple wrapper script for the GitHub Issue Scraper CLI
+// This allows users to run the tool from anywhere after installation
+
+const path = require('path');
+const { spawn } = require('child_process');
+
+// Get the path to the compiled CLI
+const cliPath = path.join(__dirname, '..', 'dist', 'cli', 'index.js');
+
+// Forward all arguments to the main CLI
+const child = spawn('node', [cliPath, ...process.argv.slice(2)], {
+  stdio: 'inherit'
+});
+
+// Forward exit code
+child.on('exit', (code) => {
+  process.exit(code);
+});
+
+// Handle errors
+child.on('error', (error) => {
+  console.error('Failed to start GitHub Issue Scraper:', error.message);
+  process.exit(1);
+});

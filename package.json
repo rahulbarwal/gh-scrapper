@@ -4,15 +4,20 @@
   "description": "A CLI tool for scraping GitHub issues within specific repositories and product areas",
   "main": "dist/cli/index.js",
   "bin": {
-    "github-issue-scraper": "dist/cli/index.js"
+    "github-issue-scraper": "bin/github-issue-scraper"
   },
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli/index.js",
     "dev": "ts-node src/cli/index.ts",
     "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "lint": "eslint src/**/*.ts",
-    "clean": "rm -rf dist"
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "postinstall": "npm run build"
   },
   "keywords": [
     "github",
