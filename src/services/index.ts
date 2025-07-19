@@ -33,3 +33,8 @@ export {
   type ErrorContext,
   type ErrorSuggestion,
 } from "./error-handler";
+export {
+  GitHubIssueScraper,
+  type ScrapingProgress,
+  type ScrapingResult,
+} from "./scraper";

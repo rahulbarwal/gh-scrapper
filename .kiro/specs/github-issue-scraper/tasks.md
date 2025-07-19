@@ -80,7 +80,7 @@
   - Write tests for configuration management and authentication
   - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.2_
 
-- [ ] 10. Build integration tests
+- [x] 10. Build integration tests
 
   - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
   - Create end-to-end test with a test GitHub repository
