@@ -30,3 +30,6 @@ export {
 
 // JAN client implemented in task 2
 export { JANClient } from "./jan-client";
+
+// Prompt manager implemented in task 3
+export { PromptManager } from "./prompt-manager";
