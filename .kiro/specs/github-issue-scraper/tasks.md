@@ -35,7 +35,7 @@
   - Create fallback handling for malformed or incomplete LLM responses
   - _Requirements: 1.3, 1.4, 6.3, 6.4_
 
-- [ ] 5. Update report generation for LLM-driven output
+- [x] 5. Update report generation for LLM-driven output
 
   - Modify report generator to use LLM analysis results instead of manual parsing
   - Implement formatting for LLM-generated summaries, scores, and categorizations
