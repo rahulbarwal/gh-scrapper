@@ -1,7 +1,20 @@
 import { GitHubClient } from "./github-client";
 import { ReportGenerator } from "./report-generator";
-import { GitHubIssue, Config, RawGitHubIssue } from "../models";
-import { ErrorHandler, ErrorContext } from "./error-handler";
+import { JANClient } from "./jan-client";
+import { PromptManager } from "./prompt-manager";
+import {
+  GitHubIssue,
+  Config,
+  RawGitHubIssue,
+  RawComment,
+  LLMAnalysisResponse,
+} from "../models";
+import {
+  ErrorHandler,
+  ErrorContext,
+  ScraperError,
+  ErrorType,
+} from "./error-handler";
 
 export interface ScrapingProgress {
   phase: "fetching" | "analyzing" | "generating" | "complete";
@@ -24,15 +37,22 @@ export interface ScrapingResult {
 export class GitHubIssueScraper {
   private githubClient: GitHubClient;
   private reportGenerator: ReportGenerator;
+  private janClient: JANClient;
+  private promptManager: PromptManager;
 
-  constructor(githubToken: string) {
+  constructor(
+    githubToken: string,
+    janOptions?: { endpoint?: string; model?: string }
+  ) {
     this.githubClient = new GitHubClient(githubToken);
     this.reportGenerator = new ReportGenerator();
+    this.janClient = new JANClient(janOptions);
+    this.promptManager = new PromptManager();
   }
 
   /**
    * Main scraping orchestration method
-   * Updated to use LLM analysis instead of manual scoring
+   * Uses LLM analysis through JAN for issue processing
    */
   async scrapeRepository(
     config: Config,
@@ -45,6 +65,23 @@ export class GitHubIssueScraper {
     };
 
     return ErrorHandler.executeWithRetry(async () => {
+      // Configure JAN client with settings from config
+      if (config.janEndpoint) {
+        this.janClient.updateOptions({
+          endpoint: config.janEndpoint,
+          model: config.janModel || "llama2",
+        });
+      }
+
+      // Validate JAN connection before starting
+      try {
+        await this.janClient.validateConnection();
+        console.log("JAN connection validated successfully");
+      } catch (error: any) {
+        console.error(`JAN connection failed: ${error.message}`);
+        throw error; // Rethrow to be handled by ErrorHandler
+      }
+
       // Phase 1: Fetch all repository issues (no manual filtering)
       onProgress?.({
         phase: "fetching",
@@ -55,15 +92,14 @@ export class GitHubIssueScraper {
 
       const rawIssues = await this.fetchAllIssues(config, onProgress);
 
-      // Phase 2: LLM Analysis (placeholder - will be implemented in task 4)
+      // Phase 2: LLM Analysis with JAN
       onProgress?.({
         phase: "analyzing",
         current: 0,
         total: rawIssues.length,
-        message: "Preparing for LLM analysis...",
+        message: "Starting LLM analysis with JAN...",
       });
 
-      // TODO: Replace with actual LLM analysis in task 4
       const analyzedIssues = await this.prepareLLMAnalysis(
         rawIssues,
         config,
@@ -75,7 +111,7 @@ export class GitHubIssueScraper {
         phase: "generating",
         current: 0,
         total: 1,
-        message: "Generating report...",
+        message: "Generating report from LLM analysis...",
       });
 
       const reportPath = await this.generateReport(analyzedIssues, config);
@@ -162,36 +198,139 @@ export class GitHubIssueScraper {
   }
 
   /**
-   * Phase 2: Prepare issues for LLM analysis
-   * This is a placeholder that will be replaced with actual JAN LLM integration in task 4
-   * All manual analysis logic has been removed as per task 1
+   * Phase 2: Perform LLM analysis on issues using JAN
+   * Fetches comments, processes issues in batches, and handles LLM responses
    */
   private async prepareLLMAnalysis(
     rawIssues: RawGitHubIssue[],
     config: Config,
     onProgress?: (progress: ScrapingProgress) => void
   ): Promise<GitHubIssue[]> {
-    const analyzedIssues: GitHubIssue[] = [];
+    const context: ErrorContext = {
+      operation: "LLM analysis of issues",
+      repository: config.repository,
+      productArea: config.productArea,
+    };
 
-    for (let i = 0; i < rawIssues.length; i++) {
-      const rawIssue = rawIssues[i];
+    return ErrorHandler.executeWithRetry(async () => {
+      // Step 1: Fetch comments for all issues
+      const commentsMap = new Map<number, RawComment[]>();
 
+      for (let i = 0; i < rawIssues.length; i++) {
+        const rawIssue = rawIssues[i];
+
+        onProgress?.({
+          phase: "analyzing",
+          current: i,
+          total: rawIssues.length * 2, // Double the total to account for both fetching and analysis
+          message: `Fetching comments for issue #${rawIssue.number}...`,
+        });
+
+        try {
+          // Fetch comments for comprehensive LLM analysis
+          const comments = await this.githubClient.getIssueComments(
+            config.repository,
+            rawIssue.number
+          );
+
+          // Convert to raw format for LLM processing
+          const rawComments: RawComment[] = comments.map((comment) => ({
+            id: comment.id,
+            user: { login: comment.author },
+            body: comment.body,
+            created_at: comment.createdAt.toISOString(),
+            author_association: comment.authorType.toUpperCase(),
+          }));
+
+          commentsMap.set(rawIssue.id, rawComments);
+        } catch (error: any) {
+          console.warn(
+            `Failed to fetch comments for issue #${rawIssue.number}: ${error.message}`
+          );
+          // Set empty comments array if fetching fails
+          commentsMap.set(rawIssue.id, []);
+        }
+      }
+
+      // Step 2: Configure JAN client with settings from config
+      if (config.janEndpoint) {
+        this.janClient.updateOptions({
+          endpoint: config.janEndpoint,
+          model: config.janModel || "llama2",
+        });
+      }
+
+      // Step 3: Perform LLM analysis using JAN
       onProgress?.({
         phase: "analyzing",
-        current: i + 1,
-        total: rawIssues.length,
-        message: `Preparing issue #${rawIssue.number} for LLM analysis...`,
+        current: rawIssues.length,
+        total: rawIssues.length * 2,
+        message: "Analyzing issues with JAN LLM...",
       });
 
+      // Determine optimal batch size based on issue complexity
+      const avgIssueSize = this.calculateAverageIssueSize(
+        rawIssues,
+        commentsMap
+      );
+      const batchSize = this.determineBatchSize(avgIssueSize);
+
+      console.log(
+        `Average issue size: ${avgIssueSize} characters, batch size: ${batchSize} issues`
+      );
+
+      // Perform LLM analysis with batching
+      let llmAnalysis: LLMAnalysisResponse;
       try {
-        // Fetch comments for comprehensive LLM analysis
+        llmAnalysis = await this.janClient.analyzeIssues(
+          rawIssues,
+          commentsMap,
+          config.productArea,
+          this.promptManager,
+          batchSize
+        );
+      } catch (error: any) {
+        // Handle LLM analysis errors with fallback
+        console.error(`LLM analysis failed: ${error.message}`);
+
+        if (
+          error instanceof ScraperError &&
+          error.type === ErrorType.VALIDATION
+        ) {
+          // Try with smaller batch size as fallback
+          console.log("Retrying with smaller batch size...");
+          llmAnalysis = await this.janClient.analyzeIssues(
+            rawIssues,
+            commentsMap,
+            config.productArea,
+            this.promptManager,
+            Math.max(1, Math.floor(batchSize / 2))
+          );
+        } else {
+          throw error;
+        }
+      }
+
+      // Step 4: Convert LLM analysis results to GitHubIssue format
+      const analyzedIssues: GitHubIssue[] = [];
+
+      // Create a map of analyzed issues by ID for quick lookup
+      const analyzedIssueMap = new Map(
+        llmAnalysis.relevantIssues.map((issue) => [issue.id, issue])
+      );
+
+      // Process each raw issue
+      for (const rawIssue of rawIssues) {
+        // Get LLM analysis for this issue if available
+        const llmAnalyzed = analyzedIssueMap.get(rawIssue.id);
+
+        // Get comments for this issue
         const comments = await this.githubClient.getIssueComments(
           config.repository,
           rawIssue.number
         );
 
-        // Create a placeholder analyzed issue
-        // This will be replaced with actual LLM analysis in task 4
+        // Create GitHubIssue with LLM analysis if available, otherwise use defaults
         const analyzedIssue: GitHubIssue = {
           id: rawIssue.id,
           number: rawIssue.number,
@@ -204,47 +343,73 @@ export class GitHubIssueScraper {
           author: rawIssue.user.login,
           url: rawIssue.html_url,
           comments: comments,
-          // These placeholder values will be replaced with LLM-generated values in task 4
-          relevanceScore: 0,
-          category: "",
-          priority: "medium",
-          summary: "",
-          workarounds: [],
-          tags: [],
-          sentiment: "neutral",
+          // Use LLM analysis if available, otherwise use defaults
+          relevanceScore: llmAnalyzed?.relevanceScore || 0,
+          category: llmAnalyzed?.category || "uncategorized",
+          priority: llmAnalyzed?.priority || "medium",
+          summary: llmAnalyzed?.summary || "",
+          workarounds: llmAnalyzed?.workarounds || [],
+          tags: llmAnalyzed?.tags || [],
+          sentiment: llmAnalyzed?.sentiment || "neutral",
         };
 
-        analyzedIssues.push(analyzedIssue);
-      } catch (error: any) {
-        console.warn(
-          `Failed to fetch comments for issue #${rawIssue.number}: ${error.message}`
-        );
-
-        // Add issue without comments
-        analyzedIssues.push({
-          id: rawIssue.id,
-          number: rawIssue.number,
-          title: rawIssue.title,
-          description: rawIssue.body || "",
-          labels: rawIssue.labels.map((label) => label.name),
-          state: rawIssue.state,
-          createdAt: new Date(rawIssue.created_at),
-          updatedAt: new Date(rawIssue.updated_at),
-          author: rawIssue.user.login,
-          url: rawIssue.html_url,
-          comments: [],
-          relevanceScore: 0,
-          category: "",
-          priority: "medium",
-          summary: "",
-          workarounds: [],
-          tags: [],
-          sentiment: "neutral",
-        });
+        // Only include issues that meet the minimum relevance score threshold
+        if (analyzedIssue.relevanceScore >= config.minRelevanceScore) {
+          analyzedIssues.push(analyzedIssue);
+        }
       }
+
+      // Sort by relevance score (highest first)
+      analyzedIssues.sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+      onProgress?.({
+        phase: "analyzing",
+        current: rawIssues.length * 2,
+        total: rawIssues.length * 2,
+        message: `LLM analysis complete. Found ${analyzedIssues.length} relevant issues.`,
+      });
+
+      return analyzedIssues;
+    }, context);
+  }
+
+  /**
+   * Calculate average issue size in characters to determine optimal batch size
+   */
+  private calculateAverageIssueSize(
+    issues: RawGitHubIssue[],
+    commentsMap: Map<number, RawComment[]>
+  ): number {
+    if (issues.length === 0) return 0;
+
+    let totalSize = 0;
+
+    for (const issue of issues) {
+      // Count issue title and body
+      let issueSize = (issue.title?.length || 0) + (issue.body?.length || 0);
+
+      // Add comment sizes
+      const comments = commentsMap.get(issue.id) || [];
+      for (const comment of comments) {
+        issueSize += comment.body?.length || 0;
+      }
+
+      totalSize += issueSize;
     }
 
-    return analyzedIssues;
+    return Math.floor(totalSize / issues.length);
+  }
+
+  /**
+   * Determine optimal batch size based on average issue size
+   */
+  private determineBatchSize(avgIssueSize: number): number {
+    // These thresholds can be adjusted based on model capabilities
+    if (avgIssueSize > 20000) return 1;
+    if (avgIssueSize > 10000) return 2;
+    if (avgIssueSize > 5000) return 3;
+    if (avgIssueSize > 2000) return 5;
+    return 8; // Default for small issues
   }
 
   /**

@@ -7,6 +7,9 @@ import {
   JANCompletionRequest,
   JANCompletionResponse,
   LLMAnalysisResponse,
+  RawGitHubIssue,
+  RawComment,
+  AnalyzedIssue,
 } from "../models";
 import {
   ErrorHandler,
@@ -363,13 +366,278 @@ export class JANClient {
 
   /**
    * Analyzes GitHub issues using JAN's LLM
-   * Will be implemented in task 4
+   *
+   * @param issues Array of raw GitHub issues to analyze
+   * @param comments Map of issue ID to comments
+   * @param productArea Product area for relevance filtering
+   * @param promptManager PromptManager instance for creating prompts
+   * @param batchSize Number of issues per batch (default: 5)
+   * @returns Promise resolving to LLM analysis response
+   * @throws ScraperError if analysis fails
    */
   async analyzeIssues(
-    issues: any[],
-    productArea: string
+    issues: RawGitHubIssue[],
+    comments: Map<number, RawComment[]>,
+    productArea: string,
+    promptManager: any,
+    batchSize: number = 5
   ): Promise<LLMAnalysisResponse> {
-    throw new Error("Not implemented - will be implemented in task 4");
+    const context: ErrorContext = {
+      operation: "analyzing issues with LLM",
+      additionalInfo: {
+        model: this.options.model,
+        issueCount: issues.length,
+        productArea,
+      },
+    };
+
+    try {
+      // Validate connection and model before starting analysis
+      await this.validateModel();
+
+      // Create batches of issues to process within context limits
+      const batches = promptManager.createBatchPrompts(
+        issues,
+        comments,
+        productArea,
+        batchSize
+      );
+
+      console.log(
+        `Processing ${issues.length} issues in ${batches.length} batches`
+      );
+
+      // Process each batch and collect results
+      const batchResults: LLMAnalysisResponse[] = [];
+
+      for (let i = 0; i < batches.length; i++) {
+        console.log(
+          `Processing batch ${i + 1}/${batches.length} (${Math.min(
+            batchSize,
+            issues.length - i * batchSize
+          )} issues)`
+        );
+
+        // Create completion request with JSON response format
+        const response = await this.createCompletion(batches[i], {
+          temperature: 0.2, // Lower temperature for more consistent analysis
+          responseFormat: { type: "json_object" },
+          maxTokens: 4000, // Adjust based on model capabilities
+        });
+
+        // Parse and validate the response
+        const content = response.choices[0]?.message?.content || "";
+        const parsedResponse = promptManager.parseStructuredResponse(content);
+
+        if (!parsedResponse) {
+          // Handle malformed response
+          console.warn(
+            `Batch ${
+              i + 1
+            } returned malformed response, retrying with smaller batch`
+          );
+
+          // If this is already a small batch (1-2 issues), try with different prompt formatting
+          if (batchSize <= 2) {
+            // Try with a simpler prompt format as fallback
+            const simplifiedPrompt = this.createSimplifiedPrompt(
+              issues.slice(i * batchSize, (i + 1) * batchSize),
+              comments,
+              productArea,
+              promptManager
+            );
+
+            const fallbackResponse = await this.createCompletion(
+              simplifiedPrompt,
+              {
+                temperature: 0.1,
+                responseFormat: { type: "json_object" },
+                maxTokens: 4000,
+              }
+            );
+
+            const fallbackContent =
+              fallbackResponse.choices[0]?.message?.content || "";
+            const fallbackParsed =
+              promptManager.parseStructuredResponse(fallbackContent);
+
+            if (fallbackParsed) {
+              batchResults.push(fallbackParsed);
+            } else {
+              console.warn(
+                `Failed to parse response even with simplified prompt for batch ${
+                  i + 1
+                }`
+              );
+              // Add empty result to maintain batch count
+              batchResults.push({
+                relevantIssues: [],
+                summary: {
+                  totalAnalyzed: 0,
+                  relevantFound: 0,
+                  topCategories: [],
+                  analysisModel: this.options.model,
+                },
+              });
+            }
+          } else {
+            // Try processing the batch with smaller size
+            const smallerBatchSize = Math.max(1, Math.floor(batchSize / 2));
+            console.log(
+              `Retrying with smaller batch size: ${smallerBatchSize}`
+            );
+
+            // Process this batch again with smaller size in next iteration
+            // Adjust i to reprocess the current batch
+            batchSize = smallerBatchSize;
+            i--; // Reprocess this batch
+            continue;
+          }
+        } else {
+          batchResults.push(parsedResponse);
+        }
+      }
+
+      // Merge batch results
+      const mergedResult = this.mergeBatchResults(
+        batchResults,
+        this.options.model
+      );
+      return mergedResult;
+    } catch (error: any) {
+      // Handle specific LLM analysis errors
+      if (error.message?.includes("context length")) {
+        const suggestions: ErrorSuggestion[] = [
+          {
+            action: "Reduce batch size",
+            description: "Try analyzing fewer issues at once",
+            priority: "high",
+          },
+          {
+            action: "Use a model with larger context window",
+            description: "Switch to a model that can handle more tokens",
+            priority: "medium",
+          },
+        ];
+
+        throw new ScraperError(
+          ErrorType.VALIDATION,
+          "LLM context length exceeded during analysis",
+          context,
+          suggestions,
+          true, // Retryable
+          error
+        );
+      }
+
+      // Handle other errors
+      throw ErrorHandler.convertToScraperError(error, context);
+    }
+  }
+
+  /**
+   * Creates a simplified prompt for fallback analysis
+   * Used when standard prompt fails to produce valid response
+   */
+  private createSimplifiedPrompt(
+    issues: RawGitHubIssue[],
+    comments: Map<number, RawComment[]>,
+    productArea: string,
+    promptManager: any
+  ): JANMessage[] {
+    return [
+      {
+        role: "system",
+        content: `Analyze GitHub issues for relevance to "${productArea}". Return JSON with relevant issues.`,
+      },
+      {
+        role: "user",
+        content: `Analyze these GitHub issues for the product area "${productArea}":
+${issues
+  .map((issue) => {
+    const issueComments = comments.get(issue.id) || [];
+    return promptManager.formatIssueData(issue, issueComments);
+  })
+  .join("\n\n")}
+
+Return a JSON object with this structure:
+{
+  "relevantIssues": [
+    {
+      "id": number,
+      "title": string,
+      "relevanceScore": number (0-100),
+      "category": string,
+      "priority": "high"|"medium"|"low",
+      "summary": string,
+      "workarounds": [
+        {
+          "description": string,
+          "author": string,
+          "authorType": "maintainer"|"contributor"|"user",
+          "effectiveness": "confirmed"|"suggested"|"partial",
+          "confidence": number (0-100)
+        }
+      ],
+      "tags": string[],
+      "sentiment": "positive"|"neutral"|"negative"
+    }
+  ],
+  "summary": {
+    "totalAnalyzed": number,
+    "relevantFound": number,
+    "topCategories": string[],
+    "analysisModel": string
+  }
+}`,
+      },
+    ];
+  }
+
+  /**
+   * Merges multiple batch results into a single response
+   */
+  private mergeBatchResults(
+    batchResults: LLMAnalysisResponse[],
+    modelName: string
+  ): LLMAnalysisResponse {
+    // Combine all relevant issues
+    const allRelevantIssues: AnalyzedIssue[] = [];
+    let totalAnalyzed = 0;
+    const categoryCount: Record<string, number> = {};
+
+    for (const result of batchResults) {
+      if (result.relevantIssues) {
+        allRelevantIssues.push(...result.relevantIssues);
+      }
+
+      if (result.summary) {
+        totalAnalyzed += result.summary.totalAnalyzed || 0;
+
+        // Count categories for determining top categories
+        if (result.summary.topCategories) {
+          for (const category of result.summary.topCategories) {
+            categoryCount[category] = (categoryCount[category] || 0) + 1;
+          }
+        }
+      }
+    }
+
+    // Sort categories by frequency to find top categories
+    const topCategories = Object.entries(categoryCount)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([category]) => category);
+
+    return {
+      relevantIssues: allRelevantIssues,
+      summary: {
+        totalAnalyzed,
+        relevantFound: allRelevantIssues.length,
+        topCategories,
+        analysisModel: modelName,
+      },
+    };
   }
 
   /**
