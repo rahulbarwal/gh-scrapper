@@ -8,7 +8,7 @@
   - Add OpenAI SDK dependency for JAN's OpenAI-compatible API integration
   - _Requirements: 6.1, 6.2_
 
-- [ ] 2. Implement JAN client service
+- [x] 2. Implement JAN client service
 
   - Create JAN client service using OpenAI SDK for API communication
   - Implement connection validation to verify JAN server availability

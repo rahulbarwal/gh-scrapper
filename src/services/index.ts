@@ -28,5 +28,5 @@ export {
   type ScrapingResult,
 } from "./scraper";
 
-// JAN client will be implemented in task 2
-// export { JANClient, type JANClientOptions } from "./jan-client";
+// JAN client implemented in task 2
+export { JANClient } from "./jan-client";

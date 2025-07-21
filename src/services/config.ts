@@ -154,6 +154,15 @@ export class ConfigManager {
     if (process.env.OUTPUT_PATH) {
       this.config.outputPath = process.env.OUTPUT_PATH;
     }
+
+    // JAN-specific configuration
+    if (process.env.JAN_ENDPOINT) {
+      this.config.janEndpoint = process.env.JAN_ENDPOINT;
+    }
+
+    if (process.env.JAN_MODEL) {
+      this.config.janModel = process.env.JAN_MODEL;
+    }
   }
 
   /**
@@ -164,6 +173,8 @@ export class ConfigManager {
       maxIssues: 50,
       minRelevanceScore: 30,
       outputPath: "./reports",
+      janEndpoint: "http://localhost:1337",
+      janModel: "llama2",
       ...this.config,
     };
   }
