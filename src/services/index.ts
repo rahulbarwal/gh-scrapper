@@ -7,6 +7,8 @@ export {
   type RateLimitInfo,
   type PaginationOptions,
   type IssueFilters,
+  type SearchOptions,
+  type GitHubSearchResponse,
 } from "./github-client";
 export {
   RelevanceFilter,

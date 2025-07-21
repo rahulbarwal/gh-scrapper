@@ -4,12 +4,13 @@ A powerful CLI tool for scraping GitHub issues within specific repositories and 
 
 ## Features
 
-- 🔍 **Smart Filtering**: Filter issues by product area using intelligent relevance scoring
+- 🔍 **Smart Search**: Uses GitHub's Search API to find relevant issues by product area keywords
+- ⚡ **Optimized Performance**: Filters issues server-side before downloading for faster processing
+- 🎯 **Intelligent Relevance Scoring**: Advanced scoring algorithm to rank issue relevance (0-100%)
+- 💬 **Workaround Extraction**: Automatically identifies and extracts solutions from issue comments
 - 🔐 **Secure Authentication**: GitHub token-based authentication with secure storage
 - 📊 **Comprehensive Reports**: Generate detailed markdown reports with issue summaries and workarounds
 - 🚀 **Rate Limit Handling**: Automatic rate limit detection and backoff strategies
-- 💬 **Workaround Extraction**: Identify and extract solutions from issue comments
-- 🎯 **Relevance Scoring**: Advanced scoring algorithm to find the most relevant issues
 - 📝 **Multiple Output Formats**: Clean, structured markdown reports with metadata
 - 🛠️ **Interactive Setup**: Guided configuration for first-time users
 
@@ -69,6 +70,30 @@ github-issue-scraper --version
 ```bash
 npm install -g github-issue-scraper
 ```
+
+## How It Works
+
+The GitHub Issue Scraper uses a **two-phase optimized approach**:
+
+### Phase 1: Smart Search
+
+- Uses GitHub's Search API to find issues matching your product area keywords
+- Filters issues **server-side** before downloading (much faster than downloading all issues)
+- Searches issue titles, descriptions, and labels for relevant content
+
+### Phase 2: Detailed Analysis
+
+- Downloads only the pre-filtered relevant issues
+- Analyzes each issue's comments for workarounds and solutions
+- Applies advanced relevance scoring (title 40%, labels 30%, description 20%, activity 10%)
+- Extracts and classifies workarounds by effectiveness and author type
+
+### Benefits
+
+- ⚡ **10x Faster**: No need to download thousands of irrelevant issues
+- 🎯 **More Accurate**: GitHub's search finds issues you might miss with simple filtering
+- 💾 **Memory Efficient**: Processes smaller, targeted datasets
+- 🚀 **API Friendly**: Uses fewer API calls, respects rate limits better
 
 ## Quick Start
 

@@ -50,33 +50,33 @@ export class GitHubIssueScraper {
     };
 
     return ErrorHandler.executeWithRetry(async () => {
-      // Phase 1: Fetch repository issues
+      // Phase 1: Search for relevant issues using GitHub's search API
       onProgress?.({
         phase: "fetching",
         current: 0,
         total: 100,
-        message: `Fetching issues from ${config.repository}...`,
+        message: `Searching for "${config.productArea}" issues in ${config.repository}...`,
       });
 
-      const allIssues = await this.fetchRepositoryIssues(config, onProgress);
+      const searchResults = await this.searchRelevantIssues(config, onProgress);
 
-      // Phase 2: Filter and score issues for relevance
+      // Phase 2: Score and filter the search results for final relevance
       onProgress?.({
         phase: "analyzing",
         current: 0,
-        total: allIssues.length,
-        message: "Analyzing issues for relevance...",
+        total: searchResults.length,
+        message: "Scoring search results for relevance...",
       });
 
-      const relevantIssues = await this.analyzeIssuesForRelevance(
-        allIssues,
+      const filteredIssues = await this.scoreAndFilterIssues(
+        searchResults,
         config,
         onProgress
       );
 
       // Phase 3: Analyze each relevant issue in detail
       const detailedIssues = await this.analyzeIssuesInDetail(
-        relevantIssues,
+        filteredIssues,
         config,
         onProgress
       );
@@ -116,7 +116,7 @@ export class GitHubIssueScraper {
         issues: detailedIssues,
         reportPath,
         metadata: {
-          totalIssuesAnalyzed: allIssues.length,
+          totalIssuesAnalyzed: searchResults.length,
           relevantIssuesFound: detailedIssues.length,
           averageRelevanceScore: Math.round(averageRelevanceScore * 100) / 100,
           workaroundsFound,
@@ -126,52 +126,43 @@ export class GitHubIssueScraper {
   }
 
   /**
-   * Phase 1: Fetch all issues from repository
+   * Phase 1: Search for issues using GitHub's search API with product area keywords
    */
-  private async fetchRepositoryIssues(
+  private async searchRelevantIssues(
     config: Config,
     onProgress?: (progress: ScrapingProgress) => void
   ): Promise<GitHubIssue[]> {
-    const maxPages = Math.ceil(config.maxIssues / 100); // GitHub API returns max 100 per page
+    // Use GitHub's search API to find issues matching the product area
+    const searchOptions = {
+      query: config.productArea,
+      repository: config.repository,
+      state: "open" as const,
+      sort: "updated" as const,
+      order: "desc" as const,
+      maxResults: Math.min(config.maxIssues * 2, 200), // Search for more than needed to allow for filtering
+    };
 
-    const issues = await this.githubClient.getRepositoryIssues(
-      config.repository,
-      {
-        state: "open", // Focus on open issues
-        sort: "updated",
-        direction: "desc",
-      },
-      {
-        perPage: 100,
-        maxPages,
-      }
-    );
+    const issues = await this.githubClient.searchIssues(searchOptions);
 
     onProgress?.({
       phase: "fetching",
       current: issues.length,
-      total: config.maxIssues,
-      message: `Fetched ${issues.length} issues`,
+      total: searchOptions.maxResults,
+      message: `Found ${issues.length} issues matching "${config.productArea}"`,
     });
 
-    return issues.slice(0, config.maxIssues); // Ensure we don't exceed max
+    return issues;
   }
 
   /**
-   * Phase 2: Filter issues by relevance to product area
+   * Phase 2: Score and filter the search results for final relevance
    */
-  private async analyzeIssuesForRelevance(
+  private async scoreAndFilterIssues(
     issues: GitHubIssue[],
     config: Config,
     onProgress?: (progress: ScrapingProgress) => void
   ): Promise<GitHubIssue[]> {
-    const filterOptions = {
-      productArea: config.productArea,
-      minRelevanceScore: config.minRelevanceScore,
-      maxResults: config.maxIssues,
-    };
-
-    // Score all issues for relevance
+    // Score all search results for more precise relevance
     const scoredIssues = issues.map((issue, index) => {
       const relevanceScore = this.relevanceFilter.scoreRelevance(
         issue,
@@ -182,7 +173,7 @@ export class GitHubIssueScraper {
         phase: "analyzing",
         current: index + 1,
         total: issues.length,
-        message: `Analyzing issue #${issue.number} (${Math.round(
+        message: `Scoring issue #${issue.number} (${Math.round(
           relevanceScore
         )}% relevant)`,
       });
@@ -193,7 +184,13 @@ export class GitHubIssueScraper {
       };
     });
 
-    // Filter by relevance threshold
+    // Filter by relevance threshold and limit to max results
+    const filterOptions = {
+      productArea: config.productArea,
+      minRelevanceScore: config.minRelevanceScore,
+      maxResults: config.maxIssues,
+    };
+
     const relevantIssues = this.relevanceFilter.filterIssues(
       scoredIssues,
       filterOptions
