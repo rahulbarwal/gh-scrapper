@@ -9,6 +9,9 @@ export enum ErrorType {
   PARSING = "PARSING",
   FILE_SYSTEM = "FILE_SYSTEM",
   EMPTY_RESULTS = "EMPTY_RESULTS",
+  LLM_SERVICE = "LLM_SERVICE",
+  LLM_RESPONSE = "LLM_RESPONSE",
+  LLM_CONTEXT = "LLM_CONTEXT",
   UNKNOWN = "UNKNOWN",
 }
 
@@ -636,6 +639,34 @@ export class ErrorHandler {
 
     // Check if it's an Axios error (HTTP request error)
     if (this.isAxiosError(error)) {
+      // Check if this is an LLM service error based on context
+      if (
+        context.operation?.includes("LLM") ||
+        context.operation?.includes("JAN") ||
+        context.operation?.includes("analyzing issues") ||
+        context.additionalInfo?.endpoint?.includes("jan")
+      ) {
+        // Handle LLM-specific HTTP errors
+        if (error.response?.status === 429) {
+          return this.handleLLMServiceError(error, context);
+        } else if (
+          error.response?.status === 404 &&
+          context.additionalInfo?.endpoint
+        ) {
+          return this.handleLLMServiceError(error, context);
+        } else if (error.response?.status === 400) {
+          // Bad request could be context length or invalid input
+          if (
+            error.message?.includes("context") ||
+            error.message?.includes("token")
+          ) {
+            return this.handleLLMContextError(error, context);
+          }
+          return this.handleLLMServiceError(error, context);
+        }
+      }
+
+      // Handle standard HTTP errors
       if (error.response?.status === 401) {
         return this.handleAuthenticationError(error, context);
       } else if (error.response?.status === 403) {
@@ -647,8 +678,35 @@ export class ErrorHandler {
       } else if (error.response?.status === 404) {
         return this.handleRepositoryError(error, context);
       } else if (!error.response) {
+        // Check if this is likely an LLM connection error
+        if (
+          context.operation?.includes("LLM") ||
+          context.operation?.includes("JAN") ||
+          context.additionalInfo?.endpoint?.includes("jan")
+        ) {
+          return this.handleLLMServiceError(error, context);
+        }
         return this.handleNetworkError(error, context);
       }
+    }
+
+    // Check for LLM context length errors
+    if (
+      error.message &&
+      (error.message.includes("context length") ||
+        error.message.includes("maximum context") ||
+        error.message.includes("token limit"))
+    ) {
+      return this.handleLLMContextError(error, context);
+    }
+
+    // Check for LLM response parsing errors
+    if (
+      context.operation?.includes("parsing") &&
+      context.operation?.includes("LLM") &&
+      error instanceof SyntaxError
+    ) {
+      return this.handleLLMResponseError(error, context);
     }
 
     // Check for file system errors
@@ -727,5 +785,249 @@ export class ErrorHandler {
    */
   private static sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Handle LLM service errors (JAN server issues)
+   */
+  static handleLLMServiceError(
+    error: any,
+    context: ErrorContext
+  ): ScraperError {
+    let message: string;
+    let suggestions: ErrorSuggestion[] = [];
+    let isRetryable = false;
+
+    if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
+      message = `Cannot connect to LLM service at ${
+        context.additionalInfo?.endpoint || "unknown endpoint"
+      }. Is JAN running?`;
+      suggestions = [
+        {
+          action: "Start JAN server",
+          description: "Ensure JAN is running on your machine",
+          priority: "high",
+        },
+        {
+          action: "Check endpoint configuration",
+          description: `Verify the JAN endpoint (${
+            context.additionalInfo?.endpoint || "unknown"
+          }) is correct`,
+          priority: "high",
+        },
+        {
+          action: "Install JAN",
+          description:
+            "If JAN is not installed, visit https://jan.ai to download and install it",
+          priority: "medium",
+        },
+      ];
+      isRetryable = true;
+    } else if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") {
+      message =
+        "LLM service request timed out. JAN may be overloaded or processing a large request.";
+      suggestions = [
+        {
+          action: "Increase timeout",
+          description: "Configure a longer timeout for LLM operations",
+          priority: "high",
+        },
+        {
+          action: "Reduce batch size",
+          description: "Process fewer issues at once to reduce LLM load",
+          priority: "high",
+        },
+        {
+          action: "Check JAN resources",
+          description: "Ensure JAN has sufficient system resources (CPU/RAM)",
+          priority: "medium",
+        },
+      ];
+      isRetryable = true;
+    } else if (error.response?.status === 404) {
+      message =
+        "LLM API endpoint not found. JAN may not support the OpenAI-compatible API.";
+      suggestions = [
+        {
+          action: "Check JAN version",
+          description:
+            "Ensure you're using a JAN version with OpenAI-compatible API",
+          priority: "high",
+        },
+        {
+          action: "Check endpoint URL",
+          description: "Verify the JAN endpoint URL is correct",
+          priority: "high",
+        },
+        {
+          action: "Update JAN",
+          description: "Update to the latest version of JAN",
+          priority: "medium",
+        },
+      ];
+    } else if (error.response?.status === 429) {
+      message = "LLM service rate limit exceeded or insufficient resources.";
+      suggestions = [
+        {
+          action: "Wait and retry",
+          description:
+            "JAN is processing too many requests, wait and try again",
+          priority: "high",
+        },
+        {
+          action: "Check JAN resources",
+          description: "Ensure JAN has sufficient system resources",
+          priority: "medium",
+        },
+        {
+          action: "Reduce batch size",
+          description: "Process fewer issues at once to reduce LLM load",
+          priority: "medium",
+        },
+      ];
+      isRetryable = true;
+    } else {
+      message = `LLM service error: ${
+        error.message || "Unknown LLM service issue"
+      }`;
+      suggestions = [
+        {
+          action: "Check JAN logs",
+          description: "Check JAN application logs for errors",
+          priority: "high",
+        },
+        {
+          action: "Restart JAN",
+          description: "Try restarting the JAN application",
+          priority: "medium",
+        },
+      ];
+      isRetryable = true;
+    }
+
+    return new ScraperError(
+      ErrorType.LLM_SERVICE,
+      message,
+      context,
+      suggestions,
+      isRetryable,
+      error
+    );
+  }
+
+  /**
+   * Handle LLM response format errors
+   */
+  static handleLLMResponseError(
+    error: any,
+    context: ErrorContext
+  ): ScraperError {
+    let message: string;
+    let suggestions: ErrorSuggestion[] = [];
+    let isRetryable = true;
+
+    if (error.message?.includes("JSON")) {
+      message = "Failed to parse LLM response as valid JSON.";
+      suggestions = [
+        {
+          action: "Retry with clearer prompt",
+          description: "Retry with a more structured prompt format",
+          priority: "high",
+        },
+        {
+          action: "Check response format",
+          description: "Ensure the prompt specifies JSON output format",
+          priority: "high",
+        },
+        {
+          action: "Reduce complexity",
+          description:
+            "Simplify the request to reduce chance of malformed output",
+          priority: "medium",
+        },
+      ];
+    } else if (
+      error.message?.includes("missing") ||
+      error.message?.includes("required")
+    ) {
+      message = "LLM response is missing required fields.";
+      suggestions = [
+        {
+          action: "Update prompt",
+          description:
+            "Modify prompt to explicitly request all required fields",
+          priority: "high",
+        },
+        {
+          action: "Add validation",
+          description: "Implement fallback values for missing fields",
+          priority: "medium",
+        },
+      ];
+    } else {
+      message = `LLM response error: ${
+        error.message || "Invalid or unexpected LLM response format"
+      }`;
+      suggestions = [
+        {
+          action: "Check prompt structure",
+          description:
+            "Verify the prompt clearly specifies the expected response format",
+          priority: "high",
+        },
+        {
+          action: "Simplify request",
+          description: "Break down complex requests into simpler components",
+          priority: "medium",
+        },
+      ];
+    }
+
+    return new ScraperError(
+      ErrorType.LLM_RESPONSE,
+      message,
+      context,
+      suggestions,
+      isRetryable,
+      error
+    );
+  }
+
+  /**
+   * Handle LLM context length errors
+   */
+  static handleLLMContextError(
+    error: any,
+    context: ErrorContext
+  ): ScraperError {
+    const message = "LLM context length exceeded during analysis.";
+    const suggestions: ErrorSuggestion[] = [
+      {
+        action: "Reduce batch size",
+        description:
+          "Process fewer issues at once to fit within context limits",
+        priority: "high",
+      },
+      {
+        action: "Use a model with larger context window",
+        description: "Switch to a model that can handle more tokens",
+        priority: "high",
+      },
+      {
+        action: "Simplify issue data",
+        description:
+          "Truncate or summarize issue content before sending to LLM",
+        priority: "medium",
+      },
+    ];
+
+    return new ScraperError(
+      ErrorType.LLM_CONTEXT,
+      message,
+      context,
+      suggestions,
+      true, // Retryable
+      error
+    );
   }
 }

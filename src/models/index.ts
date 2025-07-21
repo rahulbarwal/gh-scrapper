@@ -30,6 +30,9 @@ export interface LLMAnalysisResponse {
     relevantFound: number;
     topCategories: string[];
     analysisModel: string;
+    processingError?: boolean;
+    processingErrors?: number;
+    totalBatches?: number;
   };
 }
 

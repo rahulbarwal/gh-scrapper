@@ -237,7 +237,7 @@ Configuration:
             throw new Error(`Failed to list models: ${response.status}`);
           }
 
-          const data = await response.json();
+          const data = (await response.json()) as { data?: any[] };
           const models = data.data || [];
 
           if (models.length === 0) {
@@ -396,7 +396,7 @@ Configuration:
               const response = await fetch(`${janEndpoint}/v1/models`);
 
               if (response.ok) {
-                const data = await response.json();
+                const data = (await response.json()) as { data?: any[] };
                 const models = data.data || [];
 
                 if (models.length > 0) {
@@ -908,7 +908,7 @@ Configuration:
         console.log("   Wait: A few minutes and retry");
         break;
 
-      case "JAN_CONNECTION":
+      case ErrorType.LLM_SERVICE:
         console.log("\n🔧 JAN Connection Help:");
         console.log("   Check: Is JAN running at the configured endpoint?");
         console.log("   Run: github-issue-scraper --test-jan");
@@ -916,12 +916,19 @@ Configuration:
         console.log("   Or: Set JAN_ENDPOINT environment variable");
         break;
 
-      case "JAN_MODEL":
+      case ErrorType.LLM_RESPONSE:
+        console.log("\n🔧 JAN Response Help:");
+        console.log("   Check: Is the LLM generating valid responses?");
+        console.log("   Try: Using a different model");
+        console.log("   Or: Reduce batch size with --batch-size option");
+        break;
+
+      case ErrorType.LLM_CONTEXT:
         console.log("\n🔧 JAN Model Help:");
         console.log("   Check: Is the model loaded in JAN?");
         console.log("   Run: github-issue-scraper --test-jan");
         console.log("   Try: --jan-model llama2");
-        console.log("   Or: Set JAN_MODEL environment variable");
+        console.log("   Or: Reduce batch size with --batch-size option");
         break;
     }
   }
