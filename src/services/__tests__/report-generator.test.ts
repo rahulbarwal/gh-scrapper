@@ -14,6 +14,7 @@ describe("ReportGenerator", () => {
     mockIssues = [
       {
         id: 123,
+        number: 123,
         title: "Authentication fails with OAuth",
         description:
           "Users are experiencing authentication failures when using OAuth flow. This is a critical issue affecting user login.",
@@ -45,6 +46,7 @@ describe("ReportGenerator", () => {
       },
       {
         id: 456,
+        number: 456,
         title: "Performance issue with large datasets",
         description:
           "Application becomes slow when processing datasets larger than 10MB",
@@ -78,6 +80,8 @@ describe("ReportGenerator", () => {
       productArea: "authentication",
       maxIssues: 50,
       minRelevanceScore: 70,
+      janEndpoint: "http://localhost:1337",
+      janModel: "llama2",
       outputPath: "./reports",
     };
   });

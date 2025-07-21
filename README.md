@@ -6,8 +6,8 @@ A powerful CLI tool for scraping GitHub issues within specific repositories and 
 
 - 🔍 **Smart Search**: Uses GitHub's Search API to find relevant issues by product area keywords
 - ⚡ **Optimized Performance**: Filters issues server-side before downloading for faster processing
-- 🎯 **Intelligent Relevance Scoring**: Advanced scoring algorithm to rank issue relevance (0-100%)
-- 💬 **Workaround Extraction**: Automatically identifies and extracts solutions from issue comments
+- 🎯 **LLM-Powered Analysis**: Uses JAN's local LLM to analyze and score issue relevance (0-100%)
+- 💬 **Intelligent Workaround Extraction**: LLM identifies and extracts solutions from issue comments
 - 🔐 **Secure Authentication**: GitHub token-based authentication with secure storage
 - 📊 **Comprehensive Reports**: Generate detailed markdown reports with issue summaries and workarounds
 - 🚀 **Rate Limit Handling**: Automatic rate limit detection and backoff strategies
@@ -81,12 +81,12 @@ The GitHub Issue Scraper uses a **two-phase optimized approach**:
 - Filters issues **server-side** before downloading (much faster than downloading all issues)
 - Searches issue titles, descriptions, and labels for relevant content
 
-### Phase 2: Detailed Analysis
+### Phase 2: LLM-Powered Analysis
 
-- Downloads only the pre-filtered relevant issues
-- Analyzes each issue's comments for workarounds and solutions
-- Applies advanced relevance scoring (title 40%, labels 30%, description 20%, activity 10%)
-- Extracts and classifies workarounds by effectiveness and author type
+- Downloads the pre-filtered relevant issues
+- Sends issue data to JAN's local LLM for intelligent analysis
+- LLM determines relevance scores based on natural language understanding
+- LLM extracts and classifies workarounds by effectiveness and author type
 
 ### Benefits
 
@@ -365,7 +365,7 @@ Issues were filtered using the following criteria:
 - Keywords: "editor", "performance", "slow", "unresponsive"
 - Minimum relevance score: 30/100
 - Issue state: Open
-- Relevance factors: Title match (40%), Labels (30%), Description (20%), Activity (10%)
+- Relevance factors: Determined by LLM analysis of issue content and context
 ```
 
 ### Command Output Examples
@@ -447,7 +447,7 @@ $ github-issue-scraper -r microsoft/vscode -p "very-specific-nonexistent-feature
 npm test
 
 # Run specific test file
-npm test -- --testPathPattern=issue-parser.test.ts
+npm test -- --testPathPattern=github-client.test.ts
 
 # Run tests with coverage
 npm test -- --coverage
@@ -490,8 +490,7 @@ github-issue-scraper/
 ### Core Services
 
 - **GitHubClient**: Handles GitHub API interactions
-- **RelevanceFilter**: Scores and filters issues by relevance
-- **IssueParser**: Extracts and structures issue information
+- **JAN Client**: Interfaces with local LLM for analysis
 - **ReportGenerator**: Creates formatted markdown reports
 - **ConfigManager**: Manages configuration and settings
 - **AuthenticationService**: Handles GitHub authentication

@@ -4,9 +4,9 @@ A CLI tool for scraping GitHub issues within specific repositories and product a
 
 ## Key Features
 
-- Smart filtering with relevance scoring algorithms
+- LLM-powered analysis with JAN integration
 - GitHub API integration with rate limiting and authentication
-- Workaround extraction from issue comments
+- Intelligent workaround extraction using LLM
 - Interactive CLI with guided setup
 - Comprehensive error handling with actionable suggestions
 - Markdown report generation with structured output

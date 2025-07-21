@@ -1,8 +1,6 @@
 import { GitHubClient } from "./github-client";
-import { RelevanceFilter } from "./relevance-filter";
-import { IssueParser } from "./issue-parser";
 import { ReportGenerator } from "./report-generator";
-import { GitHubIssue, Config } from "../models";
+import { GitHubIssue, Config, RawGitHubIssue } from "../models";
 import { ErrorHandler, ErrorContext } from "./error-handler";
 
 export interface ScrapingProgress {
@@ -25,19 +23,16 @@ export interface ScrapingResult {
 
 export class GitHubIssueScraper {
   private githubClient: GitHubClient;
-  private relevanceFilter: RelevanceFilter;
-  private issueParser: IssueParser;
   private reportGenerator: ReportGenerator;
 
   constructor(githubToken: string) {
     this.githubClient = new GitHubClient(githubToken);
-    this.relevanceFilter = new RelevanceFilter();
-    this.issueParser = new IssueParser();
     this.reportGenerator = new ReportGenerator();
   }
 
   /**
    * Main scraping orchestration method
+   * Updated to use LLM analysis instead of manual scoring
    */
   async scrapeRepository(
     config: Config,
@@ -50,38 +45,32 @@ export class GitHubIssueScraper {
     };
 
     return ErrorHandler.executeWithRetry(async () => {
-      // Phase 1: Search for relevant issues using GitHub's search API
+      // Phase 1: Fetch all repository issues (no manual filtering)
       onProgress?.({
         phase: "fetching",
         current: 0,
         total: 100,
-        message: `Searching for "${config.productArea}" issues in ${config.repository}...`,
+        message: `Fetching all issues from ${config.repository}...`,
       });
 
-      const searchResults = await this.searchRelevantIssues(config, onProgress);
+      const rawIssues = await this.fetchAllIssues(config, onProgress);
 
-      // Phase 2: Score and filter the search results for final relevance
+      // Phase 2: LLM Analysis (placeholder - will be implemented in task 4)
       onProgress?.({
         phase: "analyzing",
         current: 0,
-        total: searchResults.length,
-        message: "Scoring search results for relevance...",
+        total: rawIssues.length,
+        message: "Preparing for LLM analysis...",
       });
 
-      const filteredIssues = await this.scoreAndFilterIssues(
-        searchResults,
+      // TODO: Replace with actual LLM analysis in task 4
+      const analyzedIssues = await this.prepareLLMAnalysis(
+        rawIssues,
         config,
         onProgress
       );
 
-      // Phase 3: Analyze each relevant issue in detail
-      const detailedIssues = await this.analyzeIssuesInDetail(
-        filteredIssues,
-        config,
-        onProgress
-      );
-
-      // Phase 4: Generate report
+      // Phase 3: Generate report from LLM results
       onProgress?.({
         phase: "generating",
         current: 0,
@@ -89,7 +78,7 @@ export class GitHubIssueScraper {
         message: "Generating report...",
       });
 
-      const reportPath = await this.generateReport(detailedIssues, config);
+      const reportPath = await this.generateReport(analyzedIssues, config);
 
       onProgress?.({
         phase: "complete",
@@ -99,25 +88,25 @@ export class GitHubIssueScraper {
       });
 
       // Calculate metadata
-      const workaroundsFound = detailedIssues.reduce(
+      const workaroundsFound = analyzedIssues.reduce(
         (total, issue) => total + issue.workarounds.length,
         0
       );
 
       const averageRelevanceScore =
-        detailedIssues.length > 0
-          ? detailedIssues.reduce(
+        analyzedIssues.length > 0
+          ? analyzedIssues.reduce(
               (sum, issue) => sum + issue.relevanceScore,
               0
-            ) / detailedIssues.length
+            ) / analyzedIssues.length
           : 0;
 
       return {
-        issues: detailedIssues,
+        issues: analyzedIssues,
         reportPath,
         metadata: {
-          totalIssuesAnalyzed: searchResults.length,
-          relevantIssuesFound: detailedIssues.length,
+          totalIssuesAnalyzed: rawIssues.length,
+          relevantIssuesFound: analyzedIssues.length,
           averageRelevanceScore: Math.round(averageRelevanceScore * 100) / 100,
           workaroundsFound,
         },
@@ -126,146 +115,136 @@ export class GitHubIssueScraper {
   }
 
   /**
-   * Phase 1: Search for issues using GitHub's search API with product area keywords
+   * Phase 1: Fetch all repository issues without manual filtering
+   * LLM will handle relevance determination
    */
-  private async searchRelevantIssues(
+  private async fetchAllIssues(
     config: Config,
     onProgress?: (progress: ScrapingProgress) => void
-  ): Promise<GitHubIssue[]> {
-    // Use GitHub's search API to find issues matching the product area
-    const searchOptions = {
-      query: config.productArea,
-      repository: config.repository,
-      state: "open" as const,
-      sort: "updated" as const,
-      order: "desc" as const,
-      maxResults: Math.min(config.maxIssues * 2, 200), // Search for more than needed to allow for filtering
-    };
+  ): Promise<RawGitHubIssue[]> {
+    // Fetch all issues from repository - LLM will determine relevance
+    const issues = await this.githubClient.getRepositoryIssues(
+      config.repository,
+      {
+        state: "open",
+        sort: "updated",
+        direction: "desc",
+      },
+      {
+        maxPages: Math.ceil(config.maxIssues / 100), // Fetch enough pages to get maxIssues
+      }
+    );
 
-    const issues = await this.githubClient.searchIssues(searchOptions);
+    // Convert to raw format for LLM processing
+    const rawIssues: RawGitHubIssue[] = issues.map((issue) => ({
+      id: issue.id,
+      number: issue.number,
+      title: issue.title,
+      body: issue.description,
+      labels: issue.labels.map((label) => ({ name: label })),
+      state: issue.state,
+      created_at: issue.createdAt.toISOString(),
+      updated_at: issue.updatedAt.toISOString(),
+      user: { login: issue.author },
+      html_url: issue.url,
+      comments_url: `https://api.github.com/repos/${config.repository}/issues/${issue.number}/comments`,
+      comments: issue.comments.length,
+    }));
 
     onProgress?.({
       phase: "fetching",
-      current: issues.length,
-      total: searchOptions.maxResults,
-      message: `Found ${issues.length} issues matching "${config.productArea}"`,
+      current: rawIssues.length,
+      total: config.maxIssues,
+      message: `Fetched ${rawIssues.length} issues for LLM analysis`,
     });
 
-    return issues;
+    return rawIssues.slice(0, config.maxIssues);
   }
 
   /**
-   * Phase 2: Score and filter the search results for final relevance
+   * Phase 2: Prepare issues for LLM analysis
+   * This is a placeholder that will be replaced with actual JAN LLM integration in task 4
+   * All manual analysis logic has been removed as per task 1
    */
-  private async scoreAndFilterIssues(
-    issues: GitHubIssue[],
+  private async prepareLLMAnalysis(
+    rawIssues: RawGitHubIssue[],
     config: Config,
     onProgress?: (progress: ScrapingProgress) => void
   ): Promise<GitHubIssue[]> {
-    // Score all search results for more precise relevance
-    const scoredIssues = issues.map((issue, index) => {
-      const relevanceScore = this.relevanceFilter.scoreRelevance(
-        issue,
-        config.productArea
-      );
+    const analyzedIssues: GitHubIssue[] = [];
 
-      onProgress?.({
-        phase: "analyzing",
-        current: index + 1,
-        total: issues.length,
-        message: `Scoring issue #${issue.number} (${Math.round(
-          relevanceScore
-        )}% relevant)`,
-      });
-
-      return {
-        ...issue,
-        relevanceScore,
-      };
-    });
-
-    // Filter by relevance threshold and limit to max results
-    const filterOptions = {
-      productArea: config.productArea,
-      minRelevanceScore: config.minRelevanceScore,
-      maxResults: config.maxIssues,
-    };
-
-    const relevantIssues = this.relevanceFilter.filterIssues(
-      scoredIssues,
-      filterOptions
-    );
-
-    return relevantIssues;
-  }
-
-  /**
-   * Phase 3: Analyze each relevant issue in detail (comments, workarounds)
-   */
-  private async analyzeIssuesInDetail(
-    issues: GitHubIssue[],
-    config: Config,
-    onProgress?: (progress: ScrapingProgress) => void
-  ): Promise<GitHubIssue[]> {
-    const detailedIssues: GitHubIssue[] = [];
-
-    for (let i = 0; i < issues.length; i++) {
-      const issue = issues[i];
+    for (let i = 0; i < rawIssues.length; i++) {
+      const rawIssue = rawIssues[i];
 
       onProgress?.({
         phase: "analyzing",
         current: i + 1,
-        total: issues.length,
-        message: `Analyzing issue #${issue.number} in detail...`,
+        total: rawIssues.length,
+        message: `Preparing issue #${rawIssue.number} for LLM analysis...`,
       });
 
       try {
-        // Fetch comments for this issue
+        // Fetch comments for comprehensive LLM analysis
         const comments = await this.githubClient.getIssueComments(
           config.repository,
-          issue.number
+          rawIssue.number
         );
 
-        // Analyze comments for workarounds
-        const analyzedComments = this.issueParser.analyzeComments(comments);
-
-        // Extract workarounds
-        const workarounds =
-          this.issueParser.extractWorkarounds(analyzedComments);
-
-        // Generate summary
-        const summary = this.issueParser.generateSummary(issue, {
-          maxLength: 200,
-          includeLabels: true,
-          includeMetrics: true,
-        });
-
-        // Create detailed issue object
-        const detailedIssue: GitHubIssue = {
-          ...issue,
-          comments: analyzedComments,
-          workarounds,
-          summary,
+        // Create a placeholder analyzed issue
+        // This will be replaced with actual LLM analysis in task 4
+        const analyzedIssue: GitHubIssue = {
+          id: rawIssue.id,
+          number: rawIssue.number,
+          title: rawIssue.title,
+          description: rawIssue.body || "",
+          labels: rawIssue.labels.map((label) => label.name),
+          state: rawIssue.state,
+          createdAt: new Date(rawIssue.created_at),
+          updatedAt: new Date(rawIssue.updated_at),
+          author: rawIssue.user.login,
+          url: rawIssue.html_url,
+          comments: comments,
+          // These placeholder values will be replaced with LLM-generated values in task 4
+          relevanceScore: 0,
+          category: "",
+          priority: "medium",
+          summary: "",
+          workarounds: [],
+          tags: [],
+          sentiment: "neutral",
         };
 
-        detailedIssues.push(detailedIssue);
+        analyzedIssues.push(analyzedIssue);
       } catch (error: any) {
-        // Log error but continue with other issues
         console.warn(
-          `Failed to analyze issue #${issue.number}: ${error.message}`
+          `Failed to fetch comments for issue #${rawIssue.number}: ${error.message}`
         );
 
-        // Add issue without detailed analysis
-        detailedIssues.push({
-          ...issue,
+        // Add issue without comments
+        analyzedIssues.push({
+          id: rawIssue.id,
+          number: rawIssue.number,
+          title: rawIssue.title,
+          description: rawIssue.body || "",
+          labels: rawIssue.labels.map((label) => label.name),
+          state: rawIssue.state,
+          createdAt: new Date(rawIssue.created_at),
+          updatedAt: new Date(rawIssue.updated_at),
+          author: rawIssue.user.login,
+          url: rawIssue.html_url,
           comments: [],
+          relevanceScore: 0,
+          category: "",
+          priority: "medium",
+          summary: "",
           workarounds: [],
-          summary: `Issue #${issue.number}: ${issue.title}`,
+          tags: [],
+          sentiment: "neutral",
         });
       }
     }
 
-    return detailedIssues;
+    return analyzedIssues;
   }
 
   /**

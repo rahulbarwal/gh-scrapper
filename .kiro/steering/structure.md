@@ -15,8 +15,6 @@ src/
 │   ├── config.ts     # Configuration management
 │   ├── error-handler.ts # Centralized error handling
 │   ├── github-client.ts # GitHub API client
-│   ├── issue-parser.ts  # Issue content parsing
-│   ├── relevance-filter.ts # Issue relevance scoring
 │   ├── report-generator.ts # Markdown report generation
 │   ├── setup.ts      # Interactive setup service
 │   └── index.ts      # Service exports

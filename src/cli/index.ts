@@ -243,6 +243,8 @@ Configuration:
         maxIssues,
         minRelevanceScore,
         outputPath,
+        janEndpoint: "http://localhost:1337", // Default JAN endpoint
+        janModel: "llama2", // Default model
       };
 
       await this.validateAndMergeConfig(finalConfig);
@@ -290,6 +292,8 @@ Configuration:
         outputPath:
           options.outputPath || currentConfig.outputPath || "./reports",
         githubToken: this.configManager.getGitHubToken(),
+        janEndpoint: currentConfig.janEndpoint || "http://localhost:1337",
+        janModel: currentConfig.janModel || "llama2",
       };
 
       // Validate required fields with specific error handling
