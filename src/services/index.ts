@@ -7,6 +7,8 @@ export {
   type RateLimitInfo,
   type PaginationOptions,
   type IssueFilters,
+  type SearchOptions,
+  type GitHubSearchResponse,
 } from "./github-client";
 export {
   RelevanceFilter,
@@ -33,3 +35,8 @@ export {
   type ErrorContext,
   type ErrorSuggestion,
 } from "./error-handler";
+export {
+  GitHubIssueScraper,
+  type ScrapingProgress,
+  type ScrapingResult,
+} from "./scraper";

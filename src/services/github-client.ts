@@ -49,6 +49,22 @@ export interface IssueFilters {
   since?: string;
 }
 
+export interface SearchOptions {
+  query: string;
+  repository: string;
+  state?: "open" | "closed";
+  sort?: "created" | "updated" | "comments";
+  order?: "asc" | "desc";
+  perPage?: number;
+  maxResults?: number;
+}
+
+export interface GitHubSearchResponse {
+  total_count: number;
+  incomplete_results: boolean;
+  items: GitHubApiIssue[];
+}
+
 export class GitHubApiError extends Error {
   constructor(message: string, public status?: number, public response?: any) {
     super(message);
@@ -237,6 +253,109 @@ export class GitHubClient {
 
       return comments;
     }, context);
+  }
+
+  /**
+   * Search for issues using GitHub's search API
+   */
+  async searchIssues(options: SearchOptions): Promise<GitHubIssue[]> {
+    const context: ErrorContext = {
+      operation: "searching issues",
+      repository: options.repository,
+      productArea: options.query,
+    };
+
+    return ErrorHandler.executeWithRetry(async () => {
+      const issues: GitHubIssue[] = [];
+      const maxResults = options.maxResults || 100;
+      const perPage = Math.min(options.perPage || 100, 100); // GitHub API max is 100
+
+      // Build search query
+      const searchQuery = this.buildSearchQuery(options);
+
+      let page = 1;
+      let hasNextPage = true;
+
+      while (hasNextPage && issues.length < maxResults) {
+        const params = {
+          q: searchQuery,
+          sort: options.sort || "updated",
+          order: options.order || "desc",
+          page,
+          per_page: perPage,
+        };
+
+        const response = await this.makeRequest<GitHubSearchResponse>(
+          "/search/issues",
+          { params }
+        );
+
+        // Transform search results with error handling for malformed data
+        const pageIssues: GitHubIssue[] = [];
+        for (const apiIssue of response.data.items) {
+          try {
+            pageIssues.push(this.transformIssue(apiIssue));
+          } catch (error) {
+            // Handle malformed issue data gracefully
+            const parseContext: ErrorContext = {
+              operation: "parsing search result",
+              repository: options.repository,
+              issueId: apiIssue.id,
+            };
+            console.warn(
+              ErrorHandler.formatError(
+                ErrorHandler.handleParsingError(error, parseContext, apiIssue),
+                false
+              )
+            );
+            // Continue processing other issues
+          }
+        }
+
+        issues.push(...pageIssues);
+
+        // Check if there are more pages and we haven't hit our limit
+        hasNextPage =
+          response.data.items.length === perPage &&
+          issues.length < maxResults &&
+          page < 10; // GitHub search API has a 1000 result limit (10 pages * 100 per page)
+
+        page++;
+
+        // Log progress
+        if (issues.length > 0 && issues.length % 50 === 0) {
+          console.log(`Found ${issues.length} matching issues...`);
+        }
+      }
+
+      // Limit to requested max results
+      return issues.slice(0, maxResults);
+    }, context);
+  }
+
+  /**
+   * Build GitHub search query string
+   */
+  private buildSearchQuery(options: SearchOptions): string {
+    const queryParts: string[] = [];
+
+    // Add the main search terms
+    queryParts.push(options.query);
+
+    // Add repository filter
+    queryParts.push(`repo:${options.repository}`);
+
+    // Add type filter (issues only, not pull requests)
+    queryParts.push("type:issue");
+
+    // Add state filter
+    if (options.state) {
+      queryParts.push(`state:${options.state}`);
+    } else {
+      queryParts.push("state:open"); // Default to open issues
+    }
+
+    return queryParts.join(" ");
   }
 
   /**

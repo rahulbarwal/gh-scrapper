@@ -6,6 +6,7 @@ import {
   ConfigManager,
   AuthenticationService,
   SetupService,
+  GitHubIssueScraper,
 } from "../services";
 import { Config } from "../models";
 import {
@@ -163,11 +164,8 @@ Configuration:
       this.log(`Min Relevance Score: ${config.minRelevanceScore}`);
       this.log(`Output Path: ${config.outputPath}`);
 
-      // TODO: Execute the scraping process (will be implemented in other tasks)
-      this.log(
-        "Scraping functionality will be implemented in subsequent tasks",
-        "warn"
-      );
+      // Execute the scraping process
+      await this.executeScraping(config);
     } catch (error) {
       this.handleError(error);
       process.exit(1);
@@ -252,11 +250,8 @@ Configuration:
 
       this.log("Interactive configuration completed successfully! ✅");
 
-      // TODO: Execute the scraping process
-      this.log(
-        "Scraping functionality will be implemented in subsequent tasks",
-        "warn"
-      );
+      // Execute the scraping process
+      await this.executeScraping(finalConfig);
     } catch (error) {
       rl.close();
       throw error;
@@ -542,6 +537,77 @@ Configuration:
     }
 
     this.log("Repository access confirmed", "debug");
+  }
+
+  /**
+   * Execute the main scraping process
+   */
+  private async executeScraping(config: Config): Promise<void> {
+    this.log("🚀 Starting GitHub issue scraping process...");
+
+    const scraper = new GitHubIssueScraper(config.githubToken);
+
+    try {
+      const result = await scraper.scrapeRepository(config, (progress) => {
+        // Show progress updates
+        const percentage = Math.round(
+          (progress.current / progress.total) * 100
+        );
+
+        switch (progress.phase) {
+          case "fetching":
+            this.log(`📥 ${progress.message} (${percentage}%)`);
+            break;
+          case "analyzing":
+            this.log(
+              `🔍 ${progress.message} (${progress.current}/${progress.total})`
+            );
+            break;
+          case "generating":
+            this.log(`📝 ${progress.message}`);
+            break;
+          case "complete":
+            this.log(`✅ ${progress.message}`);
+            break;
+        }
+      });
+
+      // Display results summary
+      this.log("\n📊 Scraping Results:");
+      this.log(
+        `   Total Issues Analyzed: ${result.metadata.totalIssuesAnalyzed}`
+      );
+      this.log(
+        `   Relevant Issues Found: ${result.metadata.relevantIssuesFound}`
+      );
+      this.log(
+        `   Average Relevance Score: ${result.metadata.averageRelevanceScore}%`
+      );
+      this.log(`   Workarounds Found: ${result.metadata.workaroundsFound}`);
+      this.log(`   Report Saved: ${result.reportPath}`);
+
+      // Show top issues if verbose
+      if (this.verbose && result.issues.length > 0) {
+        this.log("\n🔝 Top Relevant Issues:");
+        result.issues.slice(0, 5).forEach((issue, index) => {
+          this.log(
+            `   ${index + 1}. #${issue.number}: ${issue.title} (${
+              issue.relevanceScore
+            }%)`
+          );
+          if (issue.workarounds.length > 0) {
+            this.log(
+              `      💡 ${issue.workarounds.length} workaround(s) available`
+            );
+          }
+        });
+      }
+
+      this.log(`\n🎉 Scraping completed successfully!`);
+    } catch (error: any) {
+      this.log(`❌ Scraping failed: ${error.message}`, "error");
+      throw error;
+    }
   }
 
   /**
