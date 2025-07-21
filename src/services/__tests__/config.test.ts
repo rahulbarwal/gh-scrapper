@@ -5,156 +5,184 @@ import { ConfigManager } from "../config";
 
 // Mock fs-extra
 jest.mock("fs-extra");
+const mockedFs = fs as jest.Mocked<typeof fs>;
 
 describe("ConfigManager", () => {
   let configManager: ConfigManager;
-  const mockConfigPath = path.join(
+  const testConfigPath = path.join(
     os.homedir(),
     ".github-issue-scraper",
     "config.json"
   );
 
   beforeEach(() => {
-    configManager = new ConfigManager();
     jest.clearAllMocks();
-    // Clear environment variables
-    delete process.env.GITHUB_TOKEN;
-    delete process.env.GITHUB_REPOSITORY;
-    delete process.env.PRODUCT_AREA;
+    configManager = new ConfigManager();
   });
 
   describe("loadConfig", () => {
-    it("should load configuration from environment variables", async () => {
-      process.env.GITHUB_TOKEN = "test-token";
-      process.env.GITHUB_REPOSITORY = "owner/repo";
-      process.env.PRODUCT_AREA = "test-area";
-
-      (fs.pathExists as jest.Mock).mockResolvedValue(false);
-
-      const config = await configManager.loadConfig();
-
-      expect(config.githubToken).toBe("test-token");
-      expect(config.repository).toBe("owner/repo");
-      expect(config.productArea).toBe("test-area");
-    });
-
-    it("should load configuration from file when it exists", async () => {
-      const fileConfig = {
-        repository: "file/repo",
-        productArea: "file-area",
-        maxIssues: 100,
+    it("should load configuration from file", async () => {
+      const mockConfig = {
+        repository: "test/repo",
+        productArea: "test-area",
+        janEndpoint: "http://custom-jan:8080",
+        janModel: "custom-model",
       };
 
-      (fs.pathExists as jest.Mock).mockResolvedValue(true);
-      (fs.readJson as jest.Mock).mockResolvedValue(fileConfig);
+      mockedFs.pathExists.mockResolvedValueOnce(true);
+      mockedFs.readJson.mockResolvedValueOnce(mockConfig);
 
       const config = await configManager.loadConfig();
 
-      expect(config.repository).toBe("file/repo");
-      expect(config.productArea).toBe("file-area");
-      expect(config.maxIssues).toBe(100);
+      expect(config).toEqual(mockConfig);
+      expect(mockedFs.pathExists).toHaveBeenCalledWith(testConfigPath);
+      expect(mockedFs.readJson).toHaveBeenCalledWith(testConfigPath);
+    });
+
+    it("should load configuration from environment variables", async () => {
+      process.env.GITHUB_TOKEN = "test-token";
+      process.env.GITHUB_REPOSITORY = "env/repo";
+      process.env.JAN_ENDPOINT = "http://env-jan:8080";
+      process.env.JAN_MODEL = "env-model";
+
+      mockedFs.pathExists.mockResolvedValueOnce(false);
+
+      const config = await configManager.loadConfig();
+
+      expect(config.githubToken).toEqual("test-token");
+      expect(config.repository).toEqual("env/repo");
+      expect(config.janEndpoint).toEqual("http://env-jan:8080");
+      expect(config.janModel).toEqual("env-model");
+
+      // Clean up
+      delete process.env.GITHUB_TOKEN;
+      delete process.env.GITHUB_REPOSITORY;
+      delete process.env.JAN_ENDPOINT;
+      delete process.env.JAN_MODEL;
     });
 
     it("should prioritize environment variables over file config", async () => {
-      process.env.GITHUB_REPOSITORY = "env/repo";
+      process.env.JAN_ENDPOINT = "http://env-jan:8080";
+      process.env.JAN_MODEL = "env-model";
 
-      const fileConfig = {
-        repository: "file/repo",
-        productArea: "file-area",
+      const mockConfig = {
+        repository: "test/repo",
+        productArea: "test-area",
+        janEndpoint: "http://file-jan:8080",
+        janModel: "file-model",
       };
 
-      (fs.pathExists as jest.Mock).mockResolvedValue(true);
-      (fs.readJson as jest.Mock).mockResolvedValue(fileConfig);
+      mockedFs.pathExists.mockResolvedValueOnce(true);
+      mockedFs.readJson.mockResolvedValueOnce(mockConfig);
 
       const config = await configManager.loadConfig();
 
-      expect(config.repository).toBe("env/repo"); // env takes precedence
-      expect(config.productArea).toBe("file-area"); // file value used when env not set
+      expect(config.repository).toEqual("test/repo");
+      expect(config.productArea).toEqual("test-area");
+      expect(config.janEndpoint).toEqual("http://env-jan:8080");
+      expect(config.janModel).toEqual("env-model");
+
+      // Clean up
+      delete process.env.JAN_ENDPOINT;
+      delete process.env.JAN_MODEL;
     });
   });
 
-  describe("saveConfig", () => {
-    it("should save configuration to file without token", async () => {
-      const configToSave = {
-        repository: "test/repo",
-        productArea: "test-area",
-        maxIssues: 50,
-      };
-
-      (fs.ensureDir as jest.Mock).mockResolvedValue(undefined);
-      (fs.writeJson as jest.Mock).mockResolvedValue(undefined);
-
-      await configManager.saveConfig(configToSave);
-
-      expect(fs.ensureDir).toHaveBeenCalledWith(path.dirname(mockConfigPath));
-      expect(fs.writeJson).toHaveBeenCalledWith(mockConfigPath, configToSave, {
-        spaces: 2,
+  describe("validateJANConfig", () => {
+    it("should validate valid JAN configuration", async () => {
+      await configManager.saveConfig({
+        janEndpoint: "http://valid-jan:8080",
+        janModel: "valid-model",
       });
+
+      const validation = configManager.validateJANConfig();
+
+      expect(validation.isValid).toBe(true);
+      expect(validation.errors).toHaveLength(0);
     });
 
-    it("should exclude GitHub token from saved file", async () => {
-      const configToSave = {
-        githubToken: "secret-token",
-        repository: "test/repo",
-        productArea: "test-area",
-      };
+    it("should detect missing JAN endpoint", async () => {
+      await configManager.saveConfig({
+        janModel: "valid-model",
+      });
 
-      (fs.ensureDir as jest.Mock).mockResolvedValue(undefined);
-      (fs.writeJson as jest.Mock).mockResolvedValue(undefined);
+      const validation = configManager.validateJANConfig();
 
-      await configManager.saveConfig(configToSave);
+      expect(validation.isValid).toBe(false);
+      expect(validation.errors).toContain("JAN endpoint is not configured");
+    });
 
-      const savedConfig = (fs.writeJson as jest.Mock).mock.calls[0][1];
-      expect(savedConfig.githubToken).toBeUndefined();
-      expect(savedConfig.repository).toBe("test/repo");
+    it("should detect invalid JAN endpoint URL", async () => {
+      await configManager.saveConfig({
+        janEndpoint: "invalid-url",
+        janModel: "valid-model",
+      });
+
+      const validation = configManager.validateJANConfig();
+
+      expect(validation.isValid).toBe(false);
+      expect(validation.errors[0]).toContain("Invalid JAN endpoint URL");
+    });
+
+    it("should detect missing JAN model", async () => {
+      await configManager.saveConfig({
+        janEndpoint: "http://valid-jan:8080",
+      });
+
+      const validation = configManager.validateJANConfig();
+
+      expect(validation.isValid).toBe(false);
+      expect(validation.errors).toContain("JAN model is not configured");
     });
   });
 
-  describe("isConfigComplete", () => {
-    it("should return true when all required fields are present", () => {
-      configManager.setGitHubToken("test-token");
-      configManager["config"] = {
-        githubToken: "test-token",
-        repository: "test/repo",
-        productArea: "test-area",
-      };
+  describe("getJANEndpoint and getJANModel", () => {
+    it("should get JAN endpoint from config", async () => {
+      await configManager.saveConfig({
+        janEndpoint: "http://config-jan:8080",
+      });
 
-      expect(configManager.isConfigComplete()).toBe(true);
+      const endpoint = configManager.getJANEndpoint();
+      expect(endpoint).toEqual("http://config-jan:8080");
     });
 
-    it("should return false when required fields are missing", () => {
-      configManager["config"] = {
-        repository: "test/repo",
-        // missing token and productArea
-      };
+    it("should get JAN endpoint from environment", async () => {
+      process.env.JAN_ENDPOINT = "http://env-jan:8080";
 
-      expect(configManager.isConfigComplete()).toBe(false);
-    });
-  });
+      const endpoint = configManager.getJANEndpoint();
+      expect(endpoint).toEqual("http://env-jan:8080");
 
-  describe("getMissingFields", () => {
-    it("should return array of missing required fields", () => {
-      configManager["config"] = {
-        repository: "test/repo",
-        // missing token and productArea
-      };
-
-      const missing = configManager.getMissingFields();
-      expect(missing).toContain("GitHub Token");
-      expect(missing).toContain("Product Area");
-      expect(missing).not.toContain("Repository");
+      // Clean up
+      delete process.env.JAN_ENDPOINT;
     });
 
-    it("should return empty array when all fields are present", () => {
-      configManager.setGitHubToken("test-token");
-      configManager["config"] = {
-        githubToken: "test-token",
-        repository: "test/repo",
-        productArea: "test-area",
-      };
+    it("should use default JAN endpoint if not configured", () => {
+      const endpoint = configManager.getJANEndpoint();
+      expect(endpoint).toEqual("http://localhost:1337");
+    });
 
-      const missing = configManager.getMissingFields();
-      expect(missing).toHaveLength(0);
+    it("should get JAN model from config", async () => {
+      await configManager.saveConfig({
+        janModel: "config-model",
+      });
+
+      const model = configManager.getJANModel();
+      expect(model).toEqual("config-model");
+    });
+
+    it("should get JAN model from environment", async () => {
+      process.env.JAN_MODEL = "env-model";
+
+      const model = configManager.getJANModel();
+      expect(model).toEqual("env-model");
+
+      // Clean up
+      delete process.env.JAN_MODEL;
+    });
+
+    it("should use default JAN model if not configured", () => {
+      const model = configManager.getJANModel();
+      expect(model).toEqual("llama2");
     });
   });
 
@@ -163,23 +191,29 @@ describe("ConfigManager", () => {
       configManager.setDefaults();
       const config = configManager.getConfig();
 
-      expect(config.maxIssues).toBe(50);
-      expect(config.minRelevanceScore).toBe(30);
-      expect(config.outputPath).toBe("./reports");
+      expect(config.maxIssues).toEqual(50);
+      expect(config.minRelevanceScore).toEqual(30);
+      expect(config.outputPath).toEqual("./reports");
+      expect(config.janEndpoint).toEqual("http://localhost:1337");
+      expect(config.janModel).toEqual("llama2");
+      expect(config.janMaxRetries).toEqual(3);
+      expect(config.janTimeout).toEqual(60000);
     });
 
-    it("should not override existing values", () => {
-      configManager["config"] = {
+    it("should not override existing values", async () => {
+      await configManager.saveConfig({
         maxIssues: 100,
-        outputPath: "./custom",
-      };
+        janEndpoint: "http://custom-jan:8080",
+        janModel: "custom-model",
+      });
 
       configManager.setDefaults();
       const config = configManager.getConfig();
 
-      expect(config.maxIssues).toBe(100); // existing value preserved
-      expect(config.minRelevanceScore).toBe(30); // default set
-      expect(config.outputPath).toBe("./custom"); // existing value preserved
+      expect(config.maxIssues).toEqual(100);
+      expect(config.janEndpoint).toEqual("http://custom-jan:8080");
+      expect(config.janModel).toEqual("custom-model");
+      expect(config.minRelevanceScore).toEqual(30); // Default
     });
   });
 });

@@ -333,10 +333,155 @@ export class SetupService {
           await this.configManager.saveConfig({ outputPath: trimmedPath });
         }
       }
+
+      // JAN Configuration
+      console.log("\n🤖 JAN Integration Configuration");
+
+      // JAN endpoint
+      const janEndpoint = await this.askQuestion(
+        "JAN endpoint URL (default: http://localhost:1337): "
+      );
+      let endpoint = "http://localhost:1337";
+      if (janEndpoint.trim()) {
+        try {
+          // Validate URL format
+          new URL(janEndpoint.trim());
+          endpoint = janEndpoint.trim();
+          await this.configManager.saveConfig({ janEndpoint: endpoint });
+        } catch (error) {
+          console.log(
+            "⚠️  Invalid URL format. Using default (http://localhost:1337)"
+          );
+        }
+      }
+
+      // Test JAN connectivity
+      console.log("🔍 Testing JAN server connectivity...");
+      try {
+        const janClient = await this.setupJANClient(endpoint);
+        if (janClient) {
+          // JAN model selection
+          await this.setupJANModel(janClient);
+        }
+      } catch (error: any) {
+        console.log(`⚠️  JAN connectivity test failed: ${error.message}`);
+        console.log(
+          "You can still proceed, but make sure JAN is running when you use the scraper."
+        );
+      }
     } catch (error: any) {
       console.log(
         "⚠️  Error during optional configuration setup. Using defaults."
       );
+    }
+  }
+
+  /**
+   * Setup JAN client and test connectivity
+   *
+   * @param endpoint JAN endpoint URL
+   * @returns JANClient instance if connection is successful, null otherwise
+   */
+  private async setupJANClient(endpoint: string): Promise<any | null> {
+    try {
+      // Import dynamically to avoid circular dependencies
+      const { JANClient } = await import("./jan-client");
+
+      const janClient = new JANClient({ endpoint });
+      const isConnected = await janClient.validateConnection();
+
+      if (isConnected) {
+        console.log("✅ Successfully connected to JAN server!");
+        return janClient;
+      }
+
+      return null;
+    } catch (error: any) {
+      console.log(`❌ Failed to connect to JAN server: ${error.message}`);
+
+      const retryConnect = await this.askQuestion(
+        "Would you like to try a different endpoint? (y/n): "
+      );
+
+      if (retryConnect.toLowerCase().startsWith("y")) {
+        const newEndpoint = await this.askQuestion("Enter JAN endpoint URL: ");
+        if (newEndpoint.trim()) {
+          try {
+            new URL(newEndpoint.trim());
+            await this.configManager.saveConfig({
+              janEndpoint: newEndpoint.trim(),
+            });
+            return this.setupJANClient(newEndpoint.trim());
+          } catch (error) {
+            console.log("⚠️  Invalid URL format. JAN setup skipped.");
+          }
+        }
+      }
+
+      return null;
+    }
+  }
+
+  /**
+   * Setup JAN model selection
+   *
+   * @param janClient JANClient instance
+   */
+  private async setupJANModel(janClient: any): Promise<void> {
+    try {
+      // Get available models
+      const response = await fetch(
+        `${janClient.getOptions().endpoint}/v1/models`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to list models: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const models = data.data || [];
+
+      if (models.length === 0) {
+        console.log(
+          "⚠️  No models available in JAN. Please load a model first."
+        );
+        return;
+      }
+
+      console.log("\n📋 Available models in JAN:");
+      models.forEach((model: any, index: number) => {
+        console.log(`${index + 1}. ${model.id}`);
+      });
+
+      const modelChoice = await this.askQuestion(
+        `Select a model (1-${models.length}, default: 1): `
+      );
+
+      let selectedModel = models[0]?.id;
+
+      if (modelChoice.trim()) {
+        const choice = parseInt(modelChoice.trim(), 10);
+        if (!isNaN(choice) && choice >= 1 && choice <= models.length) {
+          selectedModel = models[choice - 1].id;
+        } else {
+          console.log(
+            `⚠️  Invalid choice. Using first available model: ${selectedModel}`
+          );
+        }
+      }
+
+      await this.configManager.saveConfig({ janModel: selectedModel });
+      console.log(`✅ Selected model: ${selectedModel}`);
+
+      // Validate the selected model
+      try {
+        await janClient.validateModel(selectedModel);
+        console.log("✅ Model validation successful!");
+      } catch (error: any) {
+        console.log(`⚠️  Model validation failed: ${error.message}`);
+      }
+    } catch (error: any) {
+      console.log(`⚠️  Failed to list JAN models: ${error.message}`);
     }
   }
 

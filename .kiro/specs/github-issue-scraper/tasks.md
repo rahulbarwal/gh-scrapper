@@ -44,7 +44,7 @@
   - Update report metadata to include analysis model and processing statistics
   - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
-- [ ] 6. Update configuration system for JAN integration
+- [x] 6. Update configuration system for JAN integration
 
   - Add JAN endpoint and model configuration options
   - Implement JAN connectivity testing in setup process

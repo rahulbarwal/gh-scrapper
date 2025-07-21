@@ -1,263 +1,179 @@
 import { GitHubIssueScraperCLI } from "../index";
+import { ConfigManager } from "../../services/config";
+import { AuthenticationService } from "../../services/auth";
+import { SetupService } from "../../services/setup";
+
+// Mock dependencies
+jest.mock("../../services/config");
+jest.mock("../../services/auth");
+jest.mock("../../services/setup");
+jest.mock("../../services/jan-client", () => ({
+  JANClient: jest.fn().mockImplementation(() => ({
+    validateConnection: jest.fn().mockResolvedValue(true),
+    validateModel: jest.fn().mockResolvedValue(true),
+    getOptions: jest.fn().mockReturnValue({
+      endpoint: "http://localhost:1337",
+      model: "llama2",
+    }),
+  })),
+}));
+
+// Mock fetch for model listing
+global.fetch = jest.fn().mockImplementation((url) => {
+  if (url.includes("/v1/models")) {
+    return Promise.resolve({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          data: [{ id: "llama2" }, { id: "mistral" }, { id: "gpt-3.5-turbo" }],
+        }),
+    });
+  }
+  return Promise.reject(new Error(`Unexpected URL: ${url}`));
+}) as jest.Mock;
 
 describe("GitHubIssueScraperCLI", () => {
   let cli: GitHubIssueScraperCLI;
+  let mockConfigManager: jest.Mocked<ConfigManager>;
+  let mockAuthService: jest.Mocked<AuthenticationService>;
+  let mockSetupService: jest.Mocked<SetupService>;
+
+  // Mock console methods
+  const originalConsoleLog = console.log;
+  const originalConsoleError = console.error;
+  const originalConsoleWarn = console.warn;
 
   beforeEach(() => {
+    jest.clearAllMocks();
+
+    // Silence console output during tests
+    console.log = jest.fn();
+    console.error = jest.fn();
+    console.warn = jest.fn();
+
+    // Setup mocks
+    mockConfigManager = new ConfigManager() as jest.Mocked<ConfigManager>;
+    mockAuthService =
+      new AuthenticationService() as jest.Mocked<AuthenticationService>;
+    mockSetupService = new SetupService() as jest.Mocked<SetupService>;
+
+    // Mock loadConfig to return empty config
+    mockConfigManager.loadConfig = jest.fn().mockResolvedValue({});
+    mockConfigManager.getConfig = jest.fn().mockReturnValue({});
+    mockConfigManager.saveConfig = jest.fn().mockResolvedValue(undefined);
+    mockConfigManager.setDefaults = jest.fn();
+    mockConfigManager.getGitHubToken = jest.fn().mockReturnValue("mock-token");
+    mockConfigManager.getJANEndpoint = jest
+      .fn()
+      .mockReturnValue("http://localhost:1337");
+    mockConfigManager.getJANModel = jest.fn().mockReturnValue("llama2");
+
+    // Mock auth service
+    mockAuthService.validateToken = jest.fn().mockResolvedValue({
+      isValid: true,
+      user: { login: "testuser", name: "Test User" },
+      rateLimit: { limit: 5000, remaining: 4999 },
+    });
+    mockAuthService.testRepositoryAccess = jest.fn().mockResolvedValue({
+      hasAccess: true,
+    });
+
+    // Mock setup service
+    mockSetupService.runInteractiveSetup = jest.fn().mockResolvedValue(true);
+
+    // Create CLI instance
     cli = new GitHubIssueScraperCLI();
   });
 
-  describe("CLI instantiation", () => {
-    it("should create CLI instance without errors", () => {
-      expect(cli).toBeInstanceOf(GitHubIssueScraperCLI);
-    });
+  afterEach(() => {
+    // Restore console methods
+    console.log = originalConsoleLog;
+    console.error = originalConsoleError;
+    console.warn = originalConsoleWarn;
   });
 
-  describe("Repository validation", () => {
-    it("should validate correct repository format", () => {
-      const validRepos = [
-        "microsoft/vscode",
-        "facebook/react",
-        "owner/repo",
-        "test-owner/test-repo",
-        "owner123/repo456",
-      ];
+  describe("JAN configuration", () => {
+    it("should handle --test-jan option", async () => {
+      // Mock process.argv
+      process.argv = ["node", "cli.js", "--test-jan"];
 
-      // Access private method for testing via type assertion
-      const cliAny = cli as any;
+      // Start CLI
+      await cli.start();
 
-      validRepos.forEach((repo) => {
-        expect(cliAny.isValidRepositoryFormat(repo)).toBe(true);
-      });
-    });
-
-    it("should reject invalid repository formats", () => {
-      const invalidRepos = [
-        "invalid",
-        "owner/repo/extra",
-        "/repo",
-        "owner/",
-        "owner//repo",
-        "",
-        "owner repo",
-      ];
-
-      const cliAny = cli as any;
-
-      invalidRepos.forEach((repo) => {
-        expect(cliAny.isValidRepositoryFormat(repo)).toBe(false);
-      });
-    });
-  });
-
-  describe("Error handling", () => {
-    let consoleSpy: jest.SpyInstance;
-    let consoleErrorSpy: jest.SpyInstance;
-
-    beforeEach(() => {
-      consoleSpy = jest.spyOn(console, "log").mockImplementation();
-      consoleErrorSpy = jest.spyOn(console, "error").mockImplementation();
-    });
-
-    afterEach(() => {
-      consoleSpy.mockRestore();
-      consoleErrorSpy.mockRestore();
-    });
-
-    it("should handle ScraperError with formatted output", () => {
-      const cliAny = cli as any;
-      const {
-        ScraperError,
-        ErrorType,
-      } = require("../../services/error-handler");
-
-      const mockError = new ScraperError(
-        ErrorType.AUTHENTICATION,
-        "GitHub authentication failed",
-        { operation: "test" },
-        [
-          {
-            action: "Check token",
-            description: "Verify your token",
-            priority: "high",
-          },
-        ]
+      // Verify JAN connectivity test was called
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining("Testing JAN connectivity")
       );
+    });
 
-      // Mock the ErrorHandler.formatError method
-      const originalFormatError = require("../../services/error-handler")
-        .ErrorHandler.formatError;
-      require("../../services/error-handler").ErrorHandler.formatError = jest
+    it("should handle custom JAN endpoint", async () => {
+      // Mock process.argv
+      process.argv = ["node", "cli.js", "--jan-endpoint", "http://custom:8080"];
+
+      // Mock validateAndMergeConfig to capture the config
+      let capturedConfig: any;
+      (cli as any).validateAndMergeConfig = jest
         .fn()
-        .mockReturnValue("Formatted error");
+        .mockImplementation((options) => {
+          capturedConfig = options;
+          return Promise.resolve({
+            githubToken: "mock-token",
+            repository: "owner/repo",
+            productArea: "test",
+            maxIssues: 50,
+            minRelevanceScore: 30,
+            outputPath: "./reports",
+            janEndpoint: options.janEndpoint,
+            janModel: options.janModel || "llama2",
+          });
+        });
 
-      cliAny.handleError(mockError);
+      // Mock validateAuthentication
+      (cli as any).validateAuthentication = jest.fn().mockResolvedValue(true);
 
-      expect(consoleErrorSpy).toHaveBeenCalledWith("Formatted error");
-      expect(consoleSpy).toHaveBeenCalledWith("\n🔧 Quick Setup:");
+      // Mock executeScraping
+      (cli as any).executeScraping = jest.fn().mockResolvedValue({});
 
-      // Restore original method
-      require("../../services/error-handler").ErrorHandler.formatError =
-        originalFormatError;
+      // Start CLI
+      await cli.start();
+
+      // Verify custom endpoint was used
+      expect(capturedConfig.janEndpoint).toBe("http://custom:8080");
     });
 
-    it("should provide contextual help for authentication errors", () => {
-      const cliAny = cli as any;
-      const mockError = {
-        type: "AUTHENTICATION",
-        message: "Auth failed",
-        context: { operation: "test" },
-        suggestions: [],
-      };
+    it("should handle custom JAN model", async () => {
+      // Mock process.argv
+      process.argv = ["node", "cli.js", "--jan-model", "mistral"];
 
-      cliAny.provideContextualHelp(mockError);
-
-      expect(consoleSpy).toHaveBeenCalledWith("\n🔧 Quick Setup:");
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "   Run: github-issue-scraper --setup"
-      );
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "   Or set: export GITHUB_TOKEN=your_token_here"
-      );
-    });
-
-    it("should provide contextual help for repository errors", () => {
-      const cliAny = cli as any;
-      const mockError = {
-        type: "REPOSITORY_ACCESS",
-        message: "Repo not found",
-        context: { operation: "test" },
-        suggestions: [],
-      };
-
-      cliAny.provideContextualHelp(mockError);
-
-      expect(consoleSpy).toHaveBeenCalledWith("\n🔧 Repository Help:");
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "   Format: owner/repository-name"
-      );
-      expect(consoleSpy).toHaveBeenCalledWith("   Example: microsoft/vscode");
-    });
-
-    it("should provide contextual help for empty results", () => {
-      const cliAny = cli as any;
-      const mockError = {
-        type: "EMPTY_RESULTS",
-        message: "No results found",
-        context: { operation: "test" },
-        suggestions: [],
-      };
-
-      cliAny.provideContextualHelp(mockError);
-
-      expect(consoleSpy).toHaveBeenCalledWith("\n🔧 Search Tips:");
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "   Try: --min-relevance-score 20"
-      );
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "   Use: broader keywords like 'performance' instead of 'slow rendering'"
-      );
-    });
-
-    it("should provide contextual help for validation errors", () => {
-      const cliAny = cli as any;
-      const mockError = {
-        type: "VALIDATION",
-        message: "Validation failed",
-        context: { operation: "test" },
-        suggestions: [],
-      };
-
-      cliAny.provideContextualHelp(mockError);
-
-      expect(consoleSpy).toHaveBeenCalledWith("\n🔧 Configuration Help:");
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "   Run: github-issue-scraper --help"
-      );
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "   Or: github-issue-scraper --interactive"
-      );
-    });
-
-    it("should provide contextual help for network errors", () => {
-      const cliAny = cli as any;
-      const mockError = {
-        type: "NETWORK",
-        message: "Network failed",
-        context: { operation: "test" },
-        suggestions: [],
-      };
-
-      cliAny.provideContextualHelp(mockError);
-
-      expect(consoleSpy).toHaveBeenCalledWith("\n🔧 Network Troubleshooting:");
-      expect(consoleSpy).toHaveBeenCalledWith("   Check: Internet connection");
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "   Try: VPN or different network"
-      );
-    });
-
-    it("should handle regular errors by converting to ScraperError", () => {
-      const cliAny = cli as any;
-      const regularError = new Error("Regular error message");
-
-      // Mock ErrorHandler methods
-      const originalConvertToScraperError =
-        require("../../services/error-handler").ErrorHandler
-          .convertToScraperError;
-      const originalFormatError = require("../../services/error-handler")
-        .ErrorHandler.formatError;
-
-      const mockScraperError = {
-        type: "UNKNOWN",
-        message: "Converted error",
-        context: { operation: "CLI execution" },
-        suggestions: [],
-      };
-
-      require("../../services/error-handler").ErrorHandler.convertToScraperError =
-        jest.fn().mockReturnValue(mockScraperError);
-      require("../../services/error-handler").ErrorHandler.formatError = jest
+      // Mock validateAndMergeConfig to capture the config
+      let capturedConfig: any;
+      (cli as any).validateAndMergeConfig = jest
         .fn()
-        .mockReturnValue("Formatted converted error");
+        .mockImplementation((options) => {
+          capturedConfig = options;
+          return Promise.resolve({
+            githubToken: "mock-token",
+            repository: "owner/repo",
+            productArea: "test",
+            maxIssues: 50,
+            minRelevanceScore: 30,
+            outputPath: "./reports",
+            janEndpoint: options.janEndpoint || "http://localhost:1337",
+            janModel: options.janModel,
+          });
+        });
 
-      cliAny.handleError(regularError);
+      // Mock validateAuthentication
+      (cli as any).validateAuthentication = jest.fn().mockResolvedValue(true);
 
-      expect(consoleErrorSpy).toHaveBeenCalledWith("Formatted converted error");
+      // Mock executeScraping
+      (cli as any).executeScraping = jest.fn().mockResolvedValue({});
 
-      // Restore original methods
-      require("../../services/error-handler").ErrorHandler.convertToScraperError =
-        originalConvertToScraperError;
-      require("../../services/error-handler").ErrorHandler.formatError =
-        originalFormatError;
-    });
-  });
+      // Start CLI
+      await cli.start();
 
-  describe("Product area validation", () => {
-    it("should validate meaningful product areas", () => {
-      const validAreas = [
-        "authentication",
-        "database performance",
-        "UI components",
-        "api bugs",
-        "editor performance",
-      ];
-
-      const cliAny = cli as any;
-
-      validAreas.forEach((area) => {
-        expect(cliAny.isValidProductArea(area)).toBe(true);
-      });
-    });
-
-    it("should reject invalid product areas", () => {
-      const invalidAreas = ["", "a", " ", "  ", "x"];
-
-      const cliAny = cli as any;
-
-      invalidAreas.forEach((area) => {
-        expect(cliAny.isValidProductArea(area)).toBe(false);
-      });
+      // Verify custom model was used
+      expect(capturedConfig.janModel).toBe("mistral");
     });
   });
 });

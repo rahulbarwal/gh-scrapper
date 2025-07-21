@@ -152,4 +152,7 @@ export interface Config {
   outputPath: string;
   janEndpoint: string;
   janModel: string;
+  janApiKey?: string;
+  janMaxRetries?: number;
+  janTimeout?: number;
 }

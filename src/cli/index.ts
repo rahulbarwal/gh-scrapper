@@ -21,9 +21,12 @@ interface CLIOptions {
   maxIssues?: number;
   minRelevanceScore?: number;
   outputPath?: string;
+  janEndpoint?: string;
+  janModel?: string;
   verbose?: boolean;
   interactive?: boolean;
   setup?: boolean;
+  testJan?: boolean;
 }
 
 class GitHubIssueScraperCLI {
@@ -71,9 +74,16 @@ class GitHubIssueScraperCLI {
         "Output directory for reports",
         "./reports"
       )
+      .option(
+        "--jan-endpoint <url>",
+        "JAN server endpoint URL",
+        "http://localhost:1337"
+      )
+      .option("--jan-model <model>", "JAN model to use for analysis", "llama2")
       .option("-v, --verbose", "Enable verbose logging")
       .option("-i, --interactive", "Run in interactive mode with prompts")
       .option("--setup", "Run initial setup to configure GitHub token")
+      .option("--test-jan", "Test JAN connectivity and available models")
       .action(async (options: CLIOptions) => {
         this.verbose = options.verbose || false;
         await this.run(options);
@@ -89,6 +99,8 @@ Examples:
   $ github-issue-scraper --interactive
   $ github-issue-scraper --setup
   $ github-issue-scraper -r owner/repo -p "api bugs" --verbose
+  $ github-issue-scraper --test-jan
+  $ github-issue-scraper -r owner/repo -p "api" --jan-endpoint http://localhost:1337 --jan-model mistral
 
 Environment Variables:
   GITHUB_TOKEN          GitHub personal access token
@@ -97,6 +109,11 @@ Environment Variables:
   MAX_ISSUES            Default maximum issues to process
   MIN_RELEVANCE_SCORE   Default minimum relevance score
   OUTPUT_PATH           Default output directory
+  JAN_ENDPOINT          JAN server endpoint URL (default: http://localhost:1337)
+  JAN_MODEL             JAN model to use for analysis (default: llama2)
+  JAN_API_KEY           JAN API key (if required)
+  JAN_MAX_RETRIES       Maximum number of retries for JAN requests
+  JAN_TIMEOUT           Timeout in milliseconds for JAN requests
 
 Configuration:
   Configuration is stored in ~/.github-issue-scraper/config.json
@@ -145,6 +162,12 @@ Configuration:
       await this.configManager.loadConfig();
       this.configManager.setDefaults();
 
+      // Handle test-jan command
+      if (options.testJan) {
+        await this.testJANConnectivity(options);
+        return;
+      }
+
       // Handle interactive mode
       if (options.interactive) {
         await this.runInteractiveMode();
@@ -163,12 +186,109 @@ Configuration:
       this.log(`Max Issues: ${config.maxIssues}`);
       this.log(`Min Relevance Score: ${config.minRelevanceScore}`);
       this.log(`Output Path: ${config.outputPath}`);
+      this.log(`JAN Endpoint: ${config.janEndpoint}`);
+      this.log(`JAN Model: ${config.janModel}`);
 
       // Execute the scraping process
       await this.executeScraping(config);
     } catch (error) {
       this.handleError(error);
       process.exit(1);
+    }
+  }
+
+  /**
+   * Test JAN connectivity and available models
+   */
+  private async testJANConnectivity(options: CLIOptions): Promise<void> {
+    this.log("🔍 Testing JAN connectivity...");
+
+    try {
+      // Load configuration
+      await this.configManager.loadConfig();
+      this.configManager.setDefaults();
+
+      // Get JAN endpoint from options or config
+      const janEndpoint =
+        options.janEndpoint || this.configManager.getJANEndpoint();
+
+      this.log(`Using JAN endpoint: ${janEndpoint}`);
+
+      // Import JANClient dynamically to avoid circular dependencies
+      const { JANClient } = await import("../services/jan-client");
+
+      // Create JAN client
+      const janClient = new JANClient({ endpoint: janEndpoint });
+
+      // Test connectivity
+      this.log("Testing connection to JAN server...");
+      const isConnected = await janClient.validateConnection();
+
+      if (isConnected) {
+        this.log("✅ Successfully connected to JAN server!");
+
+        // List available models
+        try {
+          this.log("📋 Retrieving available models...");
+
+          const response = await fetch(`${janEndpoint}/v1/models`);
+
+          if (!response.ok) {
+            throw new Error(`Failed to list models: ${response.status}`);
+          }
+
+          const data = await response.json();
+          const models = data.data || [];
+
+          if (models.length === 0) {
+            this.log(
+              "⚠️  No models available in JAN. Please load a model first."
+            );
+            return;
+          }
+
+          this.log(`\n📋 Available models in JAN (${models.length}):`);
+          models.forEach((model: any, index: number) => {
+            this.log(`${index + 1}. ${model.id}`);
+          });
+
+          // Test selected model
+          const modelToTest =
+            options.janModel || this.configManager.getJANModel();
+
+          this.log(`\n🔍 Testing model: ${modelToTest}`);
+
+          try {
+            await janClient.validateModel(modelToTest);
+            this.log(
+              `✅ Model '${modelToTest}' is available and ready to use!`
+            );
+
+            // Save configuration if successful
+            await this.configManager.saveConfig({
+              janEndpoint,
+              janModel: modelToTest,
+            });
+
+            this.log("✅ JAN configuration saved successfully!");
+          } catch (error: any) {
+            this.log(`❌ Model validation failed: ${error.message}`, "error");
+            this.log(
+              "Please select a different model or load the model in JAN."
+            );
+          }
+        } catch (error: any) {
+          this.log(`❌ Failed to list JAN models: ${error.message}`, "error");
+        }
+      } else {
+        this.log("❌ Failed to connect to JAN server.", "error");
+      }
+    } catch (error: any) {
+      this.log(`❌ JAN connectivity test failed: ${error.message}`, "error");
+
+      if (this.verbose && error instanceof Error && error.stack) {
+        this.log(`Stack trace: ${error.stack}`, "debug");
+      }
     }
   }
 
@@ -233,6 +353,107 @@ Configuration:
         config.outputPath ||
         "./reports";
 
+      // JAN configuration
+      const configureJan = await this.promptUser(
+        rl,
+        "Configure JAN integration? (y/n): "
+      );
+
+      let janEndpoint = config.janEndpoint || "http://localhost:1337";
+      let janModel = config.janModel || "llama2";
+
+      if (configureJan.toLowerCase().startsWith("y")) {
+        const janEndpointInput = await this.promptUser(
+          rl,
+          `JAN endpoint URL (${janEndpoint}): `
+        );
+
+        if (janEndpointInput.trim()) {
+          try {
+            // Validate URL format
+            new URL(janEndpointInput.trim());
+            janEndpoint = janEndpointInput.trim();
+          } catch (error) {
+            this.log(
+              "⚠️  Invalid URL format. Using default or previous value.",
+              "warn"
+            );
+          }
+        }
+
+        // Test JAN connectivity
+        this.log("🔍 Testing JAN server connectivity...");
+        try {
+          const { JANClient } = await import("../services/jan-client");
+          const janClient = new JANClient({ endpoint: janEndpoint });
+          const isConnected = await janClient.validateConnection();
+
+          if (isConnected) {
+            this.log("✅ Successfully connected to JAN server!");
+
+            // List available models
+            try {
+              const response = await fetch(`${janEndpoint}/v1/models`);
+
+              if (response.ok) {
+                const data = await response.json();
+                const models = data.data || [];
+
+                if (models.length > 0) {
+                  this.log("\n📋 Available models in JAN:");
+                  models.forEach((model: any, index: number) => {
+                    this.log(`${index + 1}. ${model.id}`);
+                  });
+
+                  const modelChoice = await this.promptUser(
+                    rl,
+                    `Select a model (1-${models.length}, default: ${janModel}): `
+                  );
+
+                  if (modelChoice.trim()) {
+                    const choice = parseInt(modelChoice.trim(), 10);
+                    if (
+                      !isNaN(choice) &&
+                      choice >= 1 &&
+                      choice <= models.length
+                    ) {
+                      janModel = models[choice - 1].id;
+                    } else {
+                      this.log(
+                        `⚠️  Invalid choice. Using default or previous value: ${janModel}`,
+                        "warn"
+                      );
+                    }
+                  }
+                } else {
+                  this.log(
+                    "⚠️  No models available in JAN. Please load a model first.",
+                    "warn"
+                  );
+                }
+              } else {
+                this.log(
+                  `⚠️  Failed to list models: ${response.status}`,
+                  "warn"
+                );
+              }
+            } catch (error: any) {
+              this.log(
+                `⚠️  Failed to list JAN models: ${error.message}`,
+                "warn"
+              );
+            }
+          } else {
+            this.log("⚠️  Failed to connect to JAN server.", "warn");
+          }
+        } catch (error: any) {
+          this.log(
+            `⚠️  JAN connectivity test failed: ${error.message}`,
+            "warn"
+          );
+        }
+      }
+
       rl.close();
 
       // Validate and run with collected input
@@ -243,8 +464,8 @@ Configuration:
         maxIssues,
         minRelevanceScore,
         outputPath,
-        janEndpoint: "http://localhost:1337", // Default JAN endpoint
-        janModel: "llama2", // Default model
+        janEndpoint,
+        janModel,
       };
 
       await this.validateAndMergeConfig(finalConfig);
@@ -292,8 +513,11 @@ Configuration:
         outputPath:
           options.outputPath || currentConfig.outputPath || "./reports",
         githubToken: this.configManager.getGitHubToken(),
-        janEndpoint: currentConfig.janEndpoint || "http://localhost:1337",
-        janModel: currentConfig.janModel || "llama2",
+        janEndpoint:
+          options.janEndpoint ||
+          currentConfig.janEndpoint ||
+          "http://localhost:1337",
+        janModel: options.janModel || currentConfig.janModel || "llama2",
       };
 
       // Validate required fields with specific error handling
@@ -682,6 +906,22 @@ Configuration:
         console.log("   Check: Internet connection");
         console.log("   Try: VPN or different network");
         console.log("   Wait: A few minutes and retry");
+        break;
+
+      case "JAN_CONNECTION":
+        console.log("\n🔧 JAN Connection Help:");
+        console.log("   Check: Is JAN running at the configured endpoint?");
+        console.log("   Run: github-issue-scraper --test-jan");
+        console.log("   Try: --jan-endpoint http://localhost:1337");
+        console.log("   Or: Set JAN_ENDPOINT environment variable");
+        break;
+
+      case "JAN_MODEL":
+        console.log("\n🔧 JAN Model Help:");
+        console.log("   Check: Is the model loaded in JAN?");
+        console.log("   Run: github-issue-scraper --test-jan");
+        console.log("   Try: --jan-model llama2");
+        console.log("   Or: Set JAN_MODEL environment variable");
         break;
     }
   }
