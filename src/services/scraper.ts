@@ -119,7 +119,11 @@ export class GitHubIssueScraper {
         message: "Generating report...",
       });
 
-      const reportPath = await this.generateReport(relevantIssues, config);
+      const reportPath = await this.generateReport(
+        relevantIssues,
+        config,
+        issuesWithDetails.length
+      );
 
       onProgress?.({
         phase: "complete",
@@ -313,13 +317,14 @@ export class GitHubIssueScraper {
    */
   private async generateReport(
     issues: GitHubIssue[],
-    config: Config
+    config: Config,
+    totalAnalyzed: number
   ): Promise<string> {
     // Use the existing ReportGenerator metadata creation method
     const reportMetadata = ReportGenerator.createMetadata(
       config,
       issues,
-      issues.length
+      totalAnalyzed
     );
 
     const report = await this.reportGenerator.generateReport(

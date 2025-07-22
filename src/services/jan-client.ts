@@ -322,6 +322,27 @@ Please analyze this GitHub issue and provide a JSON response with the following 
 - framework: Extract any framework mentioned (nextjs, vite, astro, react, vue, etc.) or "N/A" if none found
 - browser: Extract any browser mentioned (chrome, firefox, safari, edge, etc.) or "N/A" if none found
 
+**PRIORITY FRAMEWORK AND BROWSER SCORING**:
+The target project uses React + Vite, and primarily supports Firefox and Chrome browsers.
+
+**Framework Priority Adjustments**:
+- Issues mentioning "react" or "vite": ADD 10-15 points to relevance score
+- Issues mentioning "nextjs": ADD 5-8 points (React-based, good compatibility)  
+- Issues mentioning "astro", "vue", "svelte": SUBTRACT 5-10 points (lower priority)
+- Issues mentioning other frameworks: SUBTRACT 10-15 points (not relevant)
+
+**Browser Priority Adjustments**:
+- Issues mentioning "firefox" or "chrome": ADD 5-10 points to relevance score
+- Issues mentioning "safari", "edge": SUBTRACT 3-5 points (lower priority)
+- Issues mentioning other browsers: SUBTRACT 5-10 points (not supported)
+
+**Combined Scoring Logic**:
+1. Start with base relevance to "${productArea}" (0-100)
+2. Apply framework priority adjustments
+3. Apply browser priority adjustments  
+4. Ensure final score stays within 0-100 range
+5. If issue mentions both high-priority framework AND browser, it should score very highly (85-95+)
+
 Focus on practical analysis that helps developers understand if this issue affects their use of ${productArea} and what they can do about it.
 `.trim();
 
