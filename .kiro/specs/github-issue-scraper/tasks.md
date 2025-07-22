@@ -62,7 +62,7 @@
   - Implement graceful degradation when LLM analysis fails
   - _Requirements: 3.5, 6.5_
 
-- [ ] 8. Update unit tests for LLM-based architecture
+- [x] 8. Update unit tests for LLM-based architecture
 
   - Remove tests for manual scoring and analysis algorithms
   - Create mock JAN client responses for various analysis scenarios
