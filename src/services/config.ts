@@ -125,6 +125,55 @@ export class ConfigManager {
   }
 
   /**
+   * Validate JAN configuration
+   *
+   * @returns Object with validation result and any error messages
+   */
+  validateJANConfig(): { isValid: boolean; errors: string[] } {
+    const errors: string[] = [];
+
+    // Check if JAN endpoint is set
+    if (!this.config.janEndpoint) {
+      errors.push("JAN endpoint is not configured");
+    } else {
+      // Validate URL format
+      try {
+        new URL(this.config.janEndpoint);
+      } catch (error) {
+        errors.push(`Invalid JAN endpoint URL: ${this.config.janEndpoint}`);
+      }
+    }
+
+    // Check if JAN model is set
+    if (!this.config.janModel) {
+      errors.push("JAN model is not configured");
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+    };
+  }
+
+  /**
+   * Get JAN endpoint from config or environment
+   */
+  getJANEndpoint(): string {
+    return (
+      this.config.janEndpoint ||
+      process.env.JAN_ENDPOINT ||
+      "http://localhost:1337"
+    );
+  }
+
+  /**
+   * Get JAN model from config or environment
+   */
+  getJANModel(): string {
+    return this.config.janModel || process.env.JAN_MODEL || "llama2";
+  }
+
+  /**
    * Load configuration from environment variables
    */
   private loadFromEnvironment(): void {
@@ -154,6 +203,34 @@ export class ConfigManager {
     if (process.env.OUTPUT_PATH) {
       this.config.outputPath = process.env.OUTPUT_PATH;
     }
+
+    // JAN-specific configuration
+    if (process.env.JAN_ENDPOINT) {
+      this.config.janEndpoint = process.env.JAN_ENDPOINT;
+    }
+
+    if (process.env.JAN_MODEL) {
+      this.config.janModel = process.env.JAN_MODEL;
+    }
+
+    // Additional JAN configuration options
+    if (process.env.JAN_API_KEY) {
+      this.config.janApiKey = process.env.JAN_API_KEY;
+    }
+
+    if (process.env.JAN_MAX_RETRIES) {
+      const maxRetries = parseInt(process.env.JAN_MAX_RETRIES, 10);
+      if (!isNaN(maxRetries) && maxRetries > 0) {
+        this.config.janMaxRetries = maxRetries;
+      }
+    }
+
+    if (process.env.JAN_TIMEOUT) {
+      const timeout = parseInt(process.env.JAN_TIMEOUT, 10);
+      if (!isNaN(timeout) && timeout > 0) {
+        this.config.janTimeout = timeout;
+      }
+    }
   }
 
   /**
@@ -164,6 +241,10 @@ export class ConfigManager {
       maxIssues: 50,
       minRelevanceScore: 30,
       outputPath: "./reports",
+      janEndpoint: "http://localhost:1337",
+      janModel: "llama2",
+      janMaxRetries: 3,
+      janTimeout: 60000, // 60 seconds
       ...this.config,
     };
   }

@@ -14,6 +14,7 @@ describe("ReportGenerator", () => {
     mockIssues = [
       {
         id: 123,
+        number: 123,
         title: "Authentication fails with OAuth",
         description:
           "Users are experiencing authentication failures when using OAuth flow. This is a critical issue affecting user login.",
@@ -45,6 +46,7 @@ describe("ReportGenerator", () => {
       },
       {
         id: 456,
+        number: 456,
         title: "Performance issue with large datasets",
         description:
           "Application becomes slow when processing datasets larger than 10MB",
@@ -78,6 +80,8 @@ describe("ReportGenerator", () => {
       productArea: "authentication",
       maxIssues: 50,
       minRelevanceScore: 70,
+      janEndpoint: "http://localhost:1337",
+      janModel: "llama2",
       outputPath: "./reports",
     };
   });
@@ -612,5 +616,261 @@ This report contains the expected structure and format.`;
         generator.saveReport(reportContent, mockMetadata, "./test-output")
       ).rejects.toThrow("File write verification failed");
     });
+  });
+});
+
+describe("LLM-driven report generation", () => {
+  let mockLLMAnalysis: any;
+
+  beforeEach(() => {
+    mockLLMAnalysis = {
+      relevantIssues: [
+        {
+          id: 123,
+          title: "Authentication fails with OAuth",
+          relevanceScore: 85,
+          category: "Authentication",
+          priority: "high",
+          summary: "Critical authentication bug affecting OAuth login flow",
+          workarounds: [
+            {
+              description: "Use API key authentication as temporary workaround",
+              author: "maintainer1",
+              authorType: "maintainer",
+              effectiveness: "confirmed",
+              confidence: 90,
+            },
+            {
+              description: "Clear browser cache and try again",
+              author: "user456",
+              authorType: "user",
+              effectiveness: "suggested",
+              confidence: 65,
+            },
+          ],
+          tags: ["bug", "authentication", "critical"],
+          sentiment: "negative",
+        },
+        {
+          id: 456,
+          title: "Performance issue with large datasets",
+          relevanceScore: 72,
+          category: "Performance",
+          priority: "medium",
+          summary: "Performance degradation with large data processing",
+          workarounds: [
+            {
+              description: "Implement pagination for large datasets",
+              author: "contributor789",
+              authorType: "contributor",
+              effectiveness: "partial",
+              confidence: 80,
+            },
+          ],
+          tags: ["performance", "enhancement"],
+          sentiment: "neutral",
+        },
+        {
+          id: 789,
+          title: "Minor UI alignment issue",
+          relevanceScore: 55,
+          category: "UI/UX",
+          priority: "low",
+          summary:
+            "Button alignment is off by a few pixels in the settings panel",
+          workarounds: [],
+          tags: ["ui", "minor"],
+          sentiment: "neutral",
+        },
+      ],
+      summary: {
+        totalAnalyzed: 100,
+        relevantFound: 3,
+        topCategories: ["Authentication", "Performance", "UI/UX"],
+        analysisModel: "llama2",
+      },
+    };
+  });
+
+  it("should generate a complete LLM-driven report with all sections", async () => {
+    const report = await reportGenerator.generateReport(
+      mockIssues,
+      mockMetadata,
+      mockConfig,
+      {},
+      mockLLMAnalysis
+    );
+
+    expect(report).toContain(
+      "# GitHub Issues Report: test-repo - authentication"
+    );
+    expect(report).toContain("## Analysis Summary");
+    expect(report).toContain("## Table of Contents");
+    expect(report).toContain("## Issues by Priority");
+    expect(report).toContain("### High Priority Issues");
+    expect(report).toContain("### Medium Priority Issues");
+    expect(report).toContain("### Low Priority Issues");
+  });
+
+  it("should include LLM-enhanced metadata section with correct information", async () => {
+    const report = await reportGenerator.generateReport(
+      mockIssues,
+      mockMetadata,
+      mockConfig,
+      {},
+      mockLLMAnalysis
+    );
+
+    expect(report).toContain(
+      "**Repository**: [test-repo](https://github.com/test/test-repo)"
+    );
+    expect(report).toContain("**Product Area**: authentication");
+    expect(report).toContain("**Total Issues Analyzed**: 100");
+    expect(report).toContain("**Relevant Issues Found**: 3");
+    expect(report).toContain("**Analysis Model**: llama2");
+    expect(report).toContain(
+      "**Top Categories**: Authentication, Performance, UI/UX"
+    );
+  });
+
+  it("should include processing statistics when provided", async () => {
+    const metadataWithStats = {
+      ...mockMetadata,
+      processingStats: {
+        batchCount: 5,
+        totalTokensUsed: 25000,
+        analysisTime: 15000, // 15 seconds
+      },
+    };
+
+    const report = await reportGenerator.generateReport(
+      mockIssues,
+      metadataWithStats,
+      mockConfig,
+      {},
+      mockLLMAnalysis
+    );
+
+    expect(report).toContain("### Processing Statistics");
+    expect(report).toContain("**Batch Count**: 5");
+    expect(report).toContain("**Total Tokens Used**: 25000");
+    expect(report).toContain("**Analysis Time**: 15.00 seconds");
+  });
+
+  it("should generate table of contents grouped by priority", async () => {
+    const report = await reportGenerator.generateReport(
+      mockIssues,
+      mockMetadata,
+      mockConfig,
+      {},
+      mockLLMAnalysis
+    );
+
+    expect(report).toContain("### High Priority Issues");
+    expect(report).toContain("[Issue #123: Authentication fails with OAuth]");
+    expect(report).toContain("### Medium Priority Issues");
+    expect(report).toContain(
+      "[Issue #456: Performance issue with large datasets]"
+    );
+    expect(report).toContain("### Low Priority Issues");
+    expect(report).toContain("[Issue #789: Minor UI alignment issue]");
+  });
+
+  it("should format LLM-analyzed issues with all required information", async () => {
+    const report = await reportGenerator.generateReport(
+      mockIssues,
+      mockMetadata,
+      mockConfig,
+      {},
+      mockLLMAnalysis
+    );
+
+    // Check issue formatting
+    expect(report).toContain(
+      "**LLM Analysis**: Critical authentication bug affecting OAuth login flow"
+    );
+    expect(report).toContain("**Relevance Score**: 85/100");
+    expect(report).toContain("**Category**: Authentication");
+    expect(report).toContain("**Priority**: 🔴 High");
+    expect(report).toContain("**Sentiment**: 😞 Negative");
+    expect(report).toContain("**Tags**: `bug`, `authentication`, `critical`");
+  });
+
+  it("should include workarounds with confidence levels", async () => {
+    const report = await reportGenerator.generateReport(
+      mockIssues,
+      mockMetadata,
+      mockConfig,
+      {},
+      mockLLMAnalysis
+    );
+
+    expect(report).toContain("##### Identified Workarounds");
+    expect(report).toContain("**👨‍💻 Maintainer** (maintainer1) ✅");
+    expect(report).toContain("**Confidence**: 90%");
+    expect(report).toContain("█████████░"); // Confidence bar
+    expect(report).toContain(
+      "Use API key authentication as temporary workaround"
+    );
+  });
+
+  it("should handle issues without workarounds", async () => {
+    const report = await reportGenerator.generateReport(
+      mockIssues,
+      mockMetadata,
+      mockConfig,
+      {},
+      mockLLMAnalysis
+    );
+
+    // Issue 789 has no workarounds
+    expect(report).toContain("*No workarounds identified by LLM analysis.*");
+  });
+
+  it("should handle empty LLM analysis results", async () => {
+    const emptyLLMAnalysis = {
+      relevantIssues: [],
+      summary: {
+        totalAnalyzed: 100,
+        relevantFound: 0,
+        topCategories: [],
+        analysisModel: "llama2",
+      },
+    };
+
+    const report = await reportGenerator.generateReport(
+      [],
+      mockMetadata,
+      mockConfig,
+      {},
+      emptyLLMAnalysis
+    );
+
+    expect(report).toContain("*No relevant issues found.*");
+    expect(report).toContain(
+      "*No relevant issues found. Consider broadening your search criteria or adjusting the LLM analysis parameters.*"
+    );
+  });
+
+  it("should create metadata with LLM analysis information", () => {
+    const processingStats = {
+      batchCount: 5,
+      totalTokensUsed: 25000,
+      analysisTime: 15000,
+    };
+
+    const metadata = ReportGenerator.createMetadata(
+      mockConfig,
+      mockIssues,
+      150,
+      mockLLMAnalysis,
+      processingStats
+    );
+
+    expect(metadata.repositoryName).toBe("test-repo");
+    expect(metadata.totalIssuesAnalyzed).toBe(100); // From LLM analysis
+    expect(metadata.relevantIssuesFound).toBe(3); // From LLM analysis
+    expect(metadata.analysisModel).toBe("llama2");
+    expect(metadata.processingStats).toEqual(processingStats);
   });
 });

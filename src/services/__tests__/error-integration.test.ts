@@ -1,7 +1,6 @@
 import axios from "axios";
 import { GitHubClient } from "../github-client";
 import { ErrorHandler, ScraperError, ErrorType } from "../error-handler";
-import { RelevanceFilter } from "../relevance-filter";
 import { GitHubIssue } from "../../models";
 
 // Mock axios

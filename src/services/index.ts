@@ -11,19 +11,6 @@ export {
   type GitHubSearchResponse,
 } from "./github-client";
 export {
-  RelevanceFilter,
-  type RelevanceFilterOptions,
-  type RelevanceWeights,
-  type KeywordMatch,
-} from "./relevance-filter";
-export {
-  IssueParser,
-  type ParsedIssueContent,
-  type IssueMetadata,
-  type WorkaroundPattern,
-  type SummaryOptions,
-} from "./issue-parser";
-export {
   ReportGenerator,
   type ReportMetadata,
   type ReportGenerationOptions,
@@ -40,3 +27,9 @@ export {
   type ScrapingProgress,
   type ScrapingResult,
 } from "./scraper";
+
+// JAN client implemented in task 2
+export { JANClient } from "./jan-client";
+
+// Prompt manager implemented in task 3
+export { PromptManager } from "./prompt-manager";

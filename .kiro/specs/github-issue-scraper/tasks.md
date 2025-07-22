@@ -1,101 +1,90 @@
 # Implementation Plan
 
-- [x] 1. Set up project structure and core interfaces
+- [x] 1. Remove existing manual analysis logic and update project structure
 
-  - Create directory structure for models, services, and CLI components
-  - Define TypeScript interfaces for Issue, Comment, Workaround, and Config models
-  - Set up package.json with required dependencies (axios, commander, dotenv, fs-extra)
-  - _Requirements: 1.1, 3.1_
+  - Remove relevance-filter.ts service and all manual scoring algorithms
+  - Remove issue-parser.ts manual workaround extraction logic
+  - Update TypeScript interfaces to support raw GitHub data and LLM analysis responses
+  - Add OpenAI SDK dependency for JAN's OpenAI-compatible API integration
+  - _Requirements: 6.1, 6.2_
 
-- [x] 2. Implement configuration and authentication system
+- [x] 2. Implement JAN client service
 
-  - Create configuration manager to handle GitHub token storage and validation
-  - Implement secure token storage using environment variables or config files
-  - Write authentication validation with GitHub API test endpoint
-  - Create CLI prompts for initial token setup and configuration
-  - _Requirements: 3.1, 3.3_
+  - Create JAN client service using OpenAI SDK for API communication
+  - Implement connection validation to verify JAN server availability
+  - Add model validation to ensure selected model is loaded in JAN
+  - Create error handling for JAN-specific scenarios (service unavailable, model not loaded)
+  - Configure default endpoint (http://localhost:1337) with override options
+  - _Requirements: 3.3, 6.1, 6.5_
 
-- [x] 3. Build GitHub API client
+- [x] 3. Build LLM prompt management system
 
-  - Implement GitHub REST API client with authentication headers
-  - Create methods for fetching repository issues with pagination support
-  - Add issue comments retrieval functionality
-  - Implement rate limiting handling with exponential backoff strategy
-  - Write error handling for common API scenarios (404, 403, rate limits)
-  - _Requirements: 1.1, 1.2, 3.2, 3.4_
+  - Create prompt templates for issue analysis with structured output requirements
+  - Implement prompt construction methods that include product area context
+  - Design JSON schema specifications for consistent LLM response format
+  - Add few-shot examples to guide LLM toward desired analysis quality
+  - Create batch processing prompts for handling multiple issues efficiently
+  - _Requirements: 6.2, 2.1, 2.3_
 
-- [x] 4. Create relevance filtering system
+- [x] 4. Integrate LLM analysis into core workflow
 
-  - Implement keyword extraction from product area input
-  - Build relevance scoring algorithm using weighted criteria (title, labels, description)
-  - Create fuzzy matching functionality for flexible keyword matching
-  - Write filtering logic to select issues above minimum relevance threshold
-  - Add sorting by relevance score and activity level
-  - _Requirements: 5.1, 5.2, 5.3, 5.5_
+  - Update GitHub client to retrieve all issues without manual filtering
+  - Modify core engine to pass raw issue data to JAN for analysis
+  - Implement structured response parsing and validation from LLM output
+  - Add batch processing logic to handle large issue sets within context limits
+  - Create fallback handling for malformed or incomplete LLM responses
+  - _Requirements: 1.3, 1.4, 6.3, 6.4_
 
-- [x] 5. Develop issue parsing and analysis
+- [x] 5. Update report generation for LLM-driven output
 
-  - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
-  - Create issue content parser to extract title, description, labels, and metadata
-  - Implement comment analysis to identify workaround patterns
-  - Build workaround extraction logic with author type classification
-  - Create executive summary generation for each issue
-  - Add logic to distinguish between official and community solutions
-  - _Requirements: 2.1, 2.2, 2.3, 2.4_
+  - Modify report generator to use LLM analysis results instead of manual parsing
+  - Implement formatting for LLM-generated summaries, scores, and categorizations
+  - Add display of LLM confidence levels and analysis metadata
+  - Create sections for LLM-identified workarounds with effectiveness ratings
+  - Update report metadata to include analysis model and processing statistics
+  - _Requirements: 4.1, 4.2, 4.3, 4.4_
 
-- [x] 6. Build report generation system
+- [x] 6. Update configuration system for JAN integration
 
-  - Implement markdown report generator with consistent formatting
-  - Create issue formatting templates with title, summary, labels, and workarounds
-  - Add metadata section with scrape date, repository info, and statistics
-  - Implement table of contents generation for navigation
-  - Create file naming convention based on repository and product area
-  - _Requirements: 1.5, 4.1, 4.2, 4.3, 4.4_
+  - Add JAN endpoint and model configuration options
+  - Implement JAN connectivity testing in setup process
+  - Create configuration validation for JAN-specific settings
+  - Add CLI prompts for JAN setup and model selection
+  - Update environment variable handling for JAN configuration
+  - _Requirements: 3.3, 6.5_
 
-- [x] 7. Implement CLI interface
+- [x] 7. Implement comprehensive error handling for LLM integration
 
-  - Create command-line argument parsing for repository URL and product area
-  - Add input validation for GitHub repository URLs and product area keywords
-  - Implement interactive prompts for missing configuration
-  - Create help documentation and usage examples
-  - Add verbose logging options for debugging
-  - _Requirements: 1.1, 5.1, 5.4_
+  - Add specific error handling for JAN service unavailability
+  - Implement retry logic for LLM API failures with exponential backoff
+  - Create user-friendly error messages for common JAN setup issues
+  - Add validation for LLM response format and required fields
+  - Implement graceful degradation when LLM analysis fails
+  - _Requirements: 3.5, 6.5_
 
-- [x] 8. Add comprehensive error handling
+- [x] 8. Update unit tests for LLM-based architecture
 
-  - Implement specific error handling for authentication failures with helpful messages
-  - Add network error recovery with retry mechanisms
-  - Create user-friendly error messages for common scenarios
-  - Implement graceful handling of malformed or inaccessible issues
-  - Add validation for empty results with suggestions for broader searches
-  - _Requirements: 3.3, 3.4, 5.4_
+  - Remove tests for manual scoring and analysis algorithms
+  - Create mock JAN client responses for various analysis scenarios
+  - Write tests for prompt construction and formatting
+  - Implement tests for LLM response parsing and validation
+  - Add tests for batch processing and context management
+  - _Requirements: 6.1, 6.3, 6.4_
 
-- [x] 9. Create unit tests for core functionality
+- [ ] 9. Build integration tests for JAN workflow
 
-  - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
-  - Write tests for GitHub API client with mocked responses
-  - Create tests for relevance scoring algorithm with known issue datasets
-  - Implement tests for issue parsing and workaround extraction
-  - Add tests for report generation and markdown formatting
-  - Write tests for configuration management and authentication
-  - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.2_
+  - Create end-to-end tests with mock JAN server responses
+  - Implement tests for JAN connectivity and error scenarios
+  - Add tests for large repository processing with LLM batching
+  - Create tests for various LLM response formats and edge cases
+  - Write performance tests for LLM analysis duration and memory usage
+  - _Requirements: 1.4, 3.3, 6.5_
 
-- [x] 10. Build integration tests
+- [x] 10. Update CLI interface and documentation
 
-  - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
-  - Create end-to-end test with a test GitHub repository
-  - Implement authentication flow testing
-  - Add tests for rate limiting and error recovery scenarios
-  - Create tests for large repository handling and performance
-  - Write tests for various product area filtering scenarios
-  - _Requirements: 1.2, 3.2, 3.4, 5.3, 5.5_
-
-- [x] 11. Finalize CLI tool and documentation
-
-  - Use following pattern to run tests: npm test -- --testPathPattern=issue-parser.test.ts
-  - Create executable CLI script with proper shebang and permissions
-  - Write comprehensive README with installation and usage instructions
-  - Add example commands and sample output
-  - Create troubleshooting guide for common issues
-  - Implement version information and help commands
-  - _Requirements: 1.5, 3.3, 4.4_
+  - Update help text and usage examples to reflect LLM-powered analysis
+  - Add JAN setup instructions and troubleshooting guide
+  - Create documentation for configuring different models in JAN
+  - Update README with JAN installation and configuration steps
+  - Add examples of LLM analysis output and interpretation
+  - _Requirements: 1.5, 3.5, 4.4_
