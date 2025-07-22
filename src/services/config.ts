@@ -166,6 +166,10 @@ export class ConfigManager {
     );
   }
 
+  getJANAPIKey(): string {
+    return this.config.janApiKey || process.env.JAN_API_KEY || "";
+  }
+
   /**
    * Get JAN model from config or environment
    */

@@ -438,7 +438,7 @@ export class SetupService {
         throw new Error(`Failed to list models: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data: any = await response.json();
       const models = data.data || [];
 
       if (models.length === 0) {

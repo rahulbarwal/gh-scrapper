@@ -249,6 +249,7 @@ Configuration:
       // Get JAN endpoint from options or config
       const janEndpoint =
         options.janEndpoint || this.configManager.getJANEndpoint();
+      const janApiKey = this.configManager.getJANAPIKey();
 
       this.log(`Using JAN endpoint: ${janEndpoint}`);
 
@@ -256,7 +257,10 @@ Configuration:
       const { JANClient } = await import("../services/jan-client");
 
       // Create JAN client
-      const janClient = new JANClient({ endpoint: janEndpoint });
+      const janClient = new JANClient({
+        endpoint: janEndpoint,
+        apiKey: janApiKey,
+      });
 
       // Test connectivity
       this.log("Testing connection to JAN server...");
