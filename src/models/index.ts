@@ -13,6 +13,8 @@ export interface GitHubIssue {
   relevanceScore: number;
   summary: string;
   workarounds: Workaround[];
+  // Jan AI Analysis Results
+  janAnalysis?: JanAnalysisResult;
 }
 
 export interface Comment {
@@ -30,6 +32,25 @@ export interface Workaround {
   authorType: "maintainer" | "contributor" | "user";
   commentId: number;
   effectiveness: "confirmed" | "suggested" | "partial";
+  // Additional Jan AI analysis
+  complexity?: "simple" | "moderate" | "complex" | "unknown";
+  type?: "usage-level" | "code-level" | "architecture-level" | "unknown";
+  implementationDifficulty?: "easy" | "medium" | "hard" | "unknown";
+}
+
+export interface JanAnalysisResult {
+  relevanceScore: number; // 0-100
+  relevanceReasoning: string;
+  hasWorkaround: boolean;
+  workaroundComplexity: "simple" | "moderate" | "complex" | "unknown";
+  workaroundType:
+    | "usage-level"
+    | "code-level"
+    | "architecture-level"
+    | "unknown";
+  workaroundDescription?: string;
+  implementationDifficulty: "easy" | "medium" | "hard" | "unknown";
+  summary: string;
 }
 
 export interface Config {
@@ -39,4 +60,21 @@ export interface Config {
   maxIssues: number;
   minRelevanceScore: number;
   outputPath: string;
+  // Jan AI Configuration
+  janConfig?: {
+    baseUrl?: string;
+    model?: string;
+    maxTokens?: number;
+    temperature?: number;
+    timeout?: number;
+  };
+}
+
+export interface ScrapingMetadata {
+  totalIssuesAnalyzed: number;
+  relevantIssuesFound: number;
+  averageRelevanceScore: number;
+  workaroundsFound: number;
+  analysisMethod: "jan-ai" | "manual-fallback" | "mixed";
+  janConnectionStatus?: string;
 }

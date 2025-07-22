@@ -1,21 +1,12 @@
-export { ConfigManager } from "./config";
-export { AuthenticationService, type AuthValidationResult } from "./auth";
-export { SetupService } from "./setup";
+export { GitHubClient, type SearchOptions } from "./github-client";
+
 export {
-  GitHubClient,
-  GitHubApiError,
-  type RateLimitInfo,
-  type PaginationOptions,
-  type IssueFilters,
-  type SearchOptions,
-  type GitHubSearchResponse,
-} from "./github-client";
-export {
-  RelevanceFilter,
-  type RelevanceFilterOptions,
-  type RelevanceWeights,
-  type KeywordMatch,
-} from "./relevance-filter";
+  JanClient,
+  type JanAnalysisRequest,
+  type JanAnalysisResult,
+  type JanClientConfig,
+} from "./jan-client";
+
 export {
   IssueParser,
   type ParsedIssueContent,
@@ -23,20 +14,24 @@ export {
   type WorkaroundPattern,
   type SummaryOptions,
 } from "./issue-parser";
+
 export {
   ReportGenerator,
   type ReportMetadata,
   type ReportGenerationOptions,
 } from "./report-generator";
-export {
-  ErrorHandler,
-  ScraperError,
-  ErrorType,
-  type ErrorContext,
-  type ErrorSuggestion,
-} from "./error-handler";
+
 export {
   GitHubIssueScraper,
   type ScrapingProgress,
   type ScrapingResult,
 } from "./scraper";
+
+export {
+  ErrorHandler,
+  type ErrorContext,
+  type ScraperError,
+  type ErrorSuggestion,
+} from "./error-handler";
+
+export { ConfigManager } from "./config";

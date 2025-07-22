@@ -1,8 +1,8 @@
 import { GitHubClient } from "./github-client";
-import { RelevanceFilter } from "./relevance-filter";
+import { JanClient, JanAnalysisRequest } from "./jan-client";
 import { IssueParser } from "./issue-parser";
-import { ReportGenerator } from "./report-generator";
-import { GitHubIssue, Config } from "../models";
+import { ReportGenerator, ReportMetadata } from "./report-generator";
+import { GitHubIssue, Config, ScrapingMetadata } from "../models";
 import { ErrorHandler, ErrorContext } from "./error-handler";
 
 export interface ScrapingProgress {
@@ -15,23 +15,18 @@ export interface ScrapingProgress {
 export interface ScrapingResult {
   issues: GitHubIssue[];
   reportPath: string;
-  metadata: {
-    totalIssuesAnalyzed: number;
-    relevantIssuesFound: number;
-    averageRelevanceScore: number;
-    workaroundsFound: number;
-  };
+  metadata: ScrapingMetadata;
 }
 
 export class GitHubIssueScraper {
   private githubClient: GitHubClient;
-  private relevanceFilter: RelevanceFilter;
+  private janClient: JanClient;
   private issueParser: IssueParser;
   private reportGenerator: ReportGenerator;
 
-  constructor(githubToken: string) {
+  constructor(githubToken: string, janConfig?: Config["janConfig"]) {
     this.githubClient = new GitHubClient(githubToken);
-    this.relevanceFilter = new RelevanceFilter();
+    this.janClient = new JanClient(janConfig);
     this.issueParser = new IssueParser();
     this.reportGenerator = new ReportGenerator();
   }
@@ -50,38 +45,57 @@ export class GitHubIssueScraper {
     };
 
     return ErrorHandler.executeWithRetry(async () => {
-      // Phase 1: Search for relevant issues using GitHub's search API
+      // Phase 1: Test Jan AI connection
       onProgress?.({
         phase: "fetching",
         current: 0,
+        total: 100,
+        message: "Testing Jan AI connection...",
+      });
+
+      const connectionStatus = await this.janClient.testConnection();
+      let analysisMethod: ScrapingMetadata["analysisMethod"] = "jan-ai";
+
+      if (!connectionStatus.connected) {
+        console.warn(`Jan AI not available: ${connectionStatus.error}`);
+        analysisMethod = "manual-fallback";
+      }
+
+      // Phase 2: Search for relevant issues using GitHub's search API
+      onProgress?.({
+        phase: "fetching",
+        current: 10,
         total: 100,
         message: `Searching for "${config.productArea}" issues in ${config.repository}...`,
       });
 
       const searchResults = await this.searchRelevantIssues(config, onProgress);
 
-      // Phase 2: Score and filter the search results for final relevance
+      // Phase 3: Analyze issues with Jan AI or fallback
       onProgress?.({
         phase: "analyzing",
         current: 0,
         total: searchResults.length,
-        message: "Scoring search results for relevance...",
+        message: connectionStatus.connected
+          ? "Analyzing issues with Jan AI..."
+          : "Using fallback analysis...",
       });
 
-      const filteredIssues = await this.scoreAndFilterIssues(
+      const analyzedIssues = await this.analyzeIssuesWithJanAI(
         searchResults,
         config,
+        connectionStatus.connected,
         onProgress
       );
 
-      // Phase 3: Analyze each relevant issue in detail
-      const detailedIssues = await this.analyzeIssuesInDetail(
-        filteredIssues,
+      // Phase 4: Fetch detailed comments for relevant issues
+      const detailedIssues = await this.enrichIssuesWithDetails(
+        analyzedIssues,
         config,
         onProgress
       );
 
-      // Phase 4: Generate report
+      // Phase 5: Generate report
       onProgress?.({
         phase: "generating",
         current: 0,
@@ -112,15 +126,21 @@ export class GitHubIssueScraper {
             ) / detailedIssues.length
           : 0;
 
+      const metadata: ScrapingMetadata = {
+        totalIssuesAnalyzed: searchResults.length,
+        relevantIssuesFound: detailedIssues.length,
+        averageRelevanceScore: Math.round(averageRelevanceScore * 100) / 100,
+        workaroundsFound,
+        analysisMethod,
+        janConnectionStatus: connectionStatus.connected
+          ? "connected"
+          : connectionStatus.error,
+      };
+
       return {
         issues: detailedIssues,
         reportPath,
-        metadata: {
-          totalIssuesAnalyzed: searchResults.length,
-          relevantIssuesFound: detailedIssues.length,
-          averageRelevanceScore: Math.round(averageRelevanceScore * 100) / 100,
-          workaroundsFound,
-        },
+        metadata,
       };
     }, context);
   }
@@ -139,7 +159,7 @@ export class GitHubIssueScraper {
       state: "open" as const,
       sort: "updated" as const,
       order: "desc" as const,
-      maxResults: Math.min(config.maxIssues * 2, 200), // Search for more than needed to allow for filtering
+      maxResults: Math.min(config.maxIssues * 3, 300), // Search for more than needed to allow for filtering
     };
 
     const issues = await this.githubClient.searchIssues(searchOptions);
@@ -155,54 +175,124 @@ export class GitHubIssueScraper {
   }
 
   /**
-   * Phase 2: Score and filter the search results for final relevance
+   * Phase 2: Analyze issues with Jan AI for relevance and workarounds
    */
-  private async scoreAndFilterIssues(
+  private async analyzeIssuesWithJanAI(
     issues: GitHubIssue[],
     config: Config,
+    useJanAI: boolean,
     onProgress?: (progress: ScrapingProgress) => void
   ): Promise<GitHubIssue[]> {
-    // Score all search results for more precise relevance
-    const scoredIssues = issues.map((issue, index) => {
-      const relevanceScore = this.relevanceFilter.scoreRelevance(
-        issue,
-        config.productArea
-      );
+    if (!useJanAI) {
+      // Fallback: basic relevance scoring
+      return this.fallbackAnalysis(issues, config, onProgress);
+    }
+
+    // Prepare analysis requests
+    const analysisRequests: JanAnalysisRequest[] = issues.map((issue) => ({
+      issue,
+      productArea: config.productArea,
+    }));
+
+    // Analyze issues in batches
+    const analysisResults = await this.janClient.analyzeIssuesBatch(
+      analysisRequests
+    );
+
+    // Combine issues with analysis results
+    const analyzedIssues = issues.map((issue, index) => {
+      const analysis = analysisResults[index];
 
       onProgress?.({
         phase: "analyzing",
         current: index + 1,
         total: issues.length,
-        message: `Scoring issue #${issue.number} (${Math.round(
-          relevanceScore
-        )}% relevant)`,
+        message: `Analyzed issue #${issue.number} (${analysis.relevanceScore}% relevant)`,
       });
 
       return {
         ...issue,
-        relevanceScore,
+        relevanceScore: analysis.relevanceScore,
+        summary: analysis.summary,
+        janAnalysis: analysis,
+        workarounds:
+          analysis.hasWorkaround && analysis.workaroundDescription
+            ? [
+                {
+                  description: analysis.workaroundDescription,
+                  author: "Jan AI Analysis",
+                  authorType: "contributor" as const,
+                  commentId: -1,
+                  effectiveness: "suggested" as const,
+                  complexity: analysis.workaroundComplexity,
+                  type: analysis.workaroundType,
+                  implementationDifficulty: analysis.implementationDifficulty,
+                },
+              ]
+            : [],
       };
     });
 
-    // Filter by relevance threshold and limit to max results
-    const filterOptions = {
-      productArea: config.productArea,
-      minRelevanceScore: config.minRelevanceScore,
-      maxResults: config.maxIssues,
-    };
-
-    const relevantIssues = this.relevanceFilter.filterIssues(
-      scoredIssues,
-      filterOptions
-    );
+    // Filter by relevance threshold and limit results
+    const relevantIssues = analyzedIssues
+      .filter((issue) => issue.relevanceScore >= config.minRelevanceScore)
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, config.maxIssues);
 
     return relevantIssues;
   }
 
   /**
-   * Phase 3: Analyze each relevant issue in detail (comments, workarounds)
+   * Fallback analysis when Jan AI is not available
    */
-  private async analyzeIssuesInDetail(
+  private async fallbackAnalysis(
+    issues: GitHubIssue[],
+    config: Config,
+    onProgress?: (progress: ScrapingProgress) => void
+  ): Promise<GitHubIssue[]> {
+    const keywords = config.productArea.toLowerCase().split(/[\s,;|&\-_]+/);
+
+    const scoredIssues = issues.map((issue, index) => {
+      // Simple keyword-based scoring
+      let score = 0;
+      const titleLower = issue.title.toLowerCase();
+      const descLower = (issue.description || "").toLowerCase();
+      const labelsLower = issue.labels.join(" ").toLowerCase();
+
+      keywords.forEach((keyword) => {
+        if (titleLower.includes(keyword)) score += 40;
+        if (labelsLower.includes(keyword)) score += 30;
+        if (descLower.includes(keyword)) score += 20;
+      });
+
+      score = Math.min(100, score);
+
+      onProgress?.({
+        phase: "analyzing",
+        current: index + 1,
+        total: issues.length,
+        message: `Fallback analysis for issue #${issue.number} (${score}% relevant)`,
+      });
+
+      return {
+        ...issue,
+        relevanceScore: score,
+        summary: `Issue #${issue.number}: ${issue.title}`,
+        workarounds: [],
+      };
+    });
+
+    // Filter and sort
+    return scoredIssues
+      .filter((issue) => issue.relevanceScore >= config.minRelevanceScore)
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, config.maxIssues);
+  }
+
+  /**
+   * Phase 3: Enrich relevant issues with detailed comments
+   */
+  private async enrichIssuesWithDetails(
     issues: GitHubIssue[],
     config: Config,
     onProgress?: (progress: ScrapingProgress) => void
@@ -216,7 +306,7 @@ export class GitHubIssueScraper {
         phase: "analyzing",
         current: i + 1,
         total: issues.length,
-        message: `Analyzing issue #${issue.number} in detail...`,
+        message: `Fetching details for issue #${issue.number}...`,
       });
 
       try {
@@ -226,41 +316,34 @@ export class GitHubIssueScraper {
           issue.number
         );
 
-        // Analyze comments for workarounds
+        // Analyze comments for additional workarounds (if not already done by Jan AI)
         const analyzedComments = this.issueParser.analyzeComments(comments);
 
-        // Extract workarounds
-        const workarounds =
+        // Extract traditional workarounds from comments
+        const commentWorkarounds =
           this.issueParser.extractWorkarounds(analyzedComments);
 
-        // Generate summary
-        const summary = this.issueParser.generateSummary(issue, {
-          maxLength: 200,
-          includeLabels: true,
-          includeMetrics: true,
-        });
+        // Combine Jan AI workarounds with comment-based ones
+        const allWorkarounds = [...issue.workarounds, ...commentWorkarounds];
 
         // Create detailed issue object
         const detailedIssue: GitHubIssue = {
           ...issue,
           comments: analyzedComments,
-          workarounds,
-          summary,
+          workarounds: allWorkarounds,
         };
 
         detailedIssues.push(detailedIssue);
       } catch (error: any) {
         // Log error but continue with other issues
         console.warn(
-          `Failed to analyze issue #${issue.number}: ${error.message}`
+          `Failed to enrich issue #${issue.number}: ${error.message}`
         );
 
         // Add issue without detailed analysis
         detailedIssues.push({
           ...issue,
           comments: [],
-          workarounds: [],
-          summary: `Issue #${issue.number}: ${issue.title}`,
         });
       }
     }
@@ -275,7 +358,8 @@ export class GitHubIssueScraper {
     issues: GitHubIssue[],
     config: Config
   ): Promise<string> {
-    const metadata = ReportGenerator.createMetadata(
+    // Use the existing ReportGenerator metadata creation method
+    const reportMetadata = ReportGenerator.createMetadata(
       config,
       issues,
       issues.length
@@ -283,7 +367,7 @@ export class GitHubIssueScraper {
 
     const report = await this.reportGenerator.generateReport(
       issues,
-      metadata,
+      reportMetadata,
       config,
       {
         includeTableOfContents: true,
@@ -294,7 +378,7 @@ export class GitHubIssueScraper {
 
     const reportPath = await this.reportGenerator.saveReport(
       report,
-      metadata,
+      reportMetadata,
       config.outputPath
     );
 
