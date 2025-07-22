@@ -21,6 +21,7 @@ A powerful CLI tool for scraping GitHub issues within specific repositories and 
 - Node.js 16.x or higher
 - npm or yarn package manager
 - GitHub personal access token
+- JAN application for local LLM analysis (https://jan.ai/)
 
 ### Install from Source
 
@@ -71,29 +72,122 @@ github-issue-scraper --version
 npm install -g github-issue-scraper
 ```
 
+### Setting up JAN for LLM Analysis
+
+This tool uses JAN's local LLM capabilities for intelligent issue analysis. Follow these steps to set up JAN:
+
+1. **Install JAN**:
+
+   - Download JAN from the official website: https://jan.ai/
+   - Follow the installation instructions for your operating system
+   - JAN provides a user-friendly interface for managing local LLMs
+   - System requirements:
+     - **Minimum**: 8GB RAM, dual-core CPU, 10GB free disk space
+     - **Recommended**: 16GB RAM, quad-core CPU, 20GB free disk space
+     - **For best performance**: 32GB RAM, 8+ core CPU or GPU acceleration
+
+2. **Start JAN**:
+
+   - Launch the JAN application
+   - JAN runs a local server that provides an OpenAI-compatible API
+   - The default endpoint is http://localhost:1337
+   - Verify the server is running by visiting http://localhost:1337/health in your browser
+
+3. **Load a Model**:
+
+   - In the JAN interface, go to the Models tab
+   - Download and load a model based on your needs:
+     - **llama2** (Default): Good balance of performance and resource usage
+     - **mistral**: Excellent analysis capabilities, better workaround extraction
+     - **phi**: Lightweight option for systems with limited resources
+     - **llama3**: Comprehensive understanding, best for in-depth analysis
+   - Click on the model name to download it
+   - After downloading, click "Load" to activate the model
+
+4. **Test JAN Connectivity**:
+
+   ```bash
+   github-issue-scraper --test-jan
+   ```
+
+   This command will:
+
+   - Verify that JAN is running and accessible
+   - List all available models in your JAN installation
+   - Test if your selected model is properly loaded
+   - Save successful configuration for future use
+
+5. **Configure JAN Options**:
+
+   ```bash
+   # Set custom JAN endpoint (if not using default)
+   github-issue-scraper -r owner/repo -p "keywords" --jan-endpoint http://localhost:1337
+
+   # Specify which model to use
+   github-issue-scraper -r owner/repo -p "keywords" --jan-model mistral
+
+   # Set both endpoint and model
+   github-issue-scraper -r owner/repo -p "keywords" --jan-endpoint http://localhost:1337 --jan-model phi
+   ```
+
+   You can also set these options using environment variables:
+
+   ```bash
+   export JAN_ENDPOINT=http://localhost:1337
+   export JAN_MODEL=mistral
+   ```
+
+6. **Model Selection Guide**:
+
+   | Model   | Best For                                       | Resource Usage |
+   | ------- | ---------------------------------------------- | -------------- |
+   | llama2  | General analysis, balanced performance         | Medium         |
+   | mistral | Technical repositories, detailed analysis      | Medium-High    |
+   | phi     | Quick analysis, systems with limited resources | Low            |
+   | llama3  | In-depth analysis, complex technical issues    | High           |
+
+7. **Troubleshooting JAN Connection**:
+   - Ensure JAN is running before starting the scraper
+   - Check that your selected model is properly loaded in JAN
+   - For large repositories, use smaller batch sizes or more powerful models
+   - If analysis fails, try a different model or reduce the number of issues
+   - Run with `--verbose` flag to see detailed JAN interaction logs
+   - See the detailed JAN integration guide: [docs/jan-guide.md](docs/jan-guide.md)
+
 ## How It Works
 
-The GitHub Issue Scraper uses a **two-phase optimized approach**:
+The GitHub Issue Scraper uses a **LLM-powered analysis approach**:
 
-### Phase 1: Smart Search
+### Phase 1: GitHub API Integration
 
-- Uses GitHub's Search API to find issues matching your product area keywords
-- Filters issues **server-side** before downloading (much faster than downloading all issues)
-- Searches issue titles, descriptions, and labels for relevant content
+- Retrieves issues from the specified GitHub repository
+- Handles authentication and rate limiting automatically
+- Collects all issue metadata, comments, and related information
+- Prepares structured data for LLM analysis
 
-### Phase 2: LLM-Powered Analysis
+### Phase 2: JAN LLM Analysis
 
-- Downloads the pre-filtered relevant issues
 - Sends issue data to JAN's local LLM for intelligent analysis
-- LLM determines relevance scores based on natural language understanding
-- LLM extracts and classifies workarounds by effectiveness and author type
+- Uses carefully crafted prompts to guide the LLM's analysis process
+- Processes issues in batches to optimize performance and manage context limits
+- Implements fallback strategies for handling large repositories
+
+### Phase 3: LLM-Powered Intelligence
+
+- **Relevance Scoring**: LLM determines how relevant each issue is to your product area (0-100%)
+- **Workaround Extraction**: LLM identifies solutions from issue comments with author attribution
+- **Issue Summarization**: LLM generates concise summaries of complex issues
+- **Categorization**: LLM groups issues into meaningful categories
+- **Priority Assessment**: LLM determines issue priority based on content analysis
+- **Sentiment Analysis**: LLM evaluates the sentiment expressed in issues and comments
 
 ### Benefits
 
-- ⚡ **10x Faster**: No need to download thousands of irrelevant issues
-- 🎯 **More Accurate**: GitHub's search finds issues you might miss with simple filtering
-- 💾 **Memory Efficient**: Processes smaller, targeted datasets
-- 🚀 **API Friendly**: Uses fewer API calls, respects rate limits better
+- 🧠 **Intelligent Analysis**: Uses natural language understanding instead of keyword matching
+- 🔍 **Context-Aware**: Understands semantic meaning and relevance beyond simple text matching
+- 💡 **Solution Finding**: Automatically extracts workarounds that might be buried in comments
+- 📊 **Comprehensive Reports**: Generates rich, structured reports with meaningful insights
+- 🚀 **Local Processing**: All analysis happens on your machine through JAN, keeping data private
 
 ## Quick Start
 
@@ -284,7 +378,7 @@ Executive summary of the issue...
 
 Here's an example of what a generated report looks like:
 
-```markdown
+````markdown
 # GitHub Issues Report: microsoft/vscode - editor performance
 
 ## Summary
@@ -358,15 +452,149 @@ TypeScript syntax highlighting becomes progressively slower as file size increas
 - **Community Solutions**: 31
 - **Most Common Labels**: performance (23), editor-core (15), typescript (8)
 
+## LLM Analysis Details
+
+### Understanding LLM-Generated Relevance Scores
+
+The relevance score (0-100) indicates how closely an issue matches your product area:
+
+- **90-100**: Directly addresses core aspects of the product area
+- **70-89**: Strongly related to the product area with significant impact
+- **50-69**: Moderately related with some relevant aspects
+- **30-49**: Tangentially related or with minor relevance
+- **0-29**: Minimal or no relevance to the product area
+
+### Interpreting Workaround Classifications
+
+The LLM classifies workarounds based on:
+
+- **Author Type**:
+
+  - **Maintainer**: Solutions from project maintainers or core team members
+  - **Contributor**: Solutions from regular contributors or experienced users
+  - **User**: Solutions from general community members
+
+- **Effectiveness Rating**:
+
+  - **Confirmed**: Workaround has been verified to solve the issue
+  - **Suggested**: Proposed solution that may work but lacks confirmation
+  - **Partial**: Solution that addresses part of the issue or works in limited cases
+
+- **Confidence Score**: Indicates the LLM's confidence (0-100%) in the workaround's validity
+
+### LLM-Generated Categories
+
+The LLM automatically categorizes issues into meaningful groups based on:
+
+- Root cause analysis
+- Affected components
+- Issue patterns and similarities
+- Technical domains
+
+### Example LLM Analysis
+
+```json
+{
+  "id": 156789,
+  "title": "Editor becomes unresponsive with large files",
+  "relevanceScore": 92,
+  "category": "Performance Degradation",
+  "priority": "high",
+  "summary": "VS Code editor becomes completely unresponsive when opening files larger than 50MB, affecting syntax highlighting, scrolling, and basic text editing operations across different operating systems.",
+  "workarounds": [
+    {
+      "description": "Disable syntax highlighting for large files by adding 'editor.largeFileOptimizations': true to settings.json",
+      "author": "vscode-team",
+      "authorType": "maintainer",
+      "effectiveness": "confirmed",
+      "confidence": 95
+    },
+    {
+      "description": "Use the 'Large File Support' extension which provides chunked loading",
+      "author": "community-member",
+      "authorType": "user",
+      "effectiveness": "suggested",
+      "confidence": 80
+    }
+  ],
+  "tags": ["performance", "large-files", "editor-core", "optimization"],
+  "sentiment": "negative"
+}
+```
+
+### Understanding LLM Analysis Results
+
+The GitHub Issue Scraper leverages JAN's LLM capabilities to provide rich, intelligent analysis:
+
+#### 1. Relevance Scoring
+
+Each issue receives a relevance score (0-100) indicating how closely it matches your product area:
+
+| Score Range | Interpretation                                 | Action                                |
+| ----------- | ---------------------------------------------- | ------------------------------------- |
+| 90-100      | Direct match to core product area concerns     | Highest priority for review           |
+| 70-89       | Strong relevance with significant impact       | Important to address                  |
+| 50-69       | Moderate relevance with some important aspects | Consider after higher priority issues |
+| 30-49       | Tangential relevance or minor connection       | Review if time permits                |
+| 0-29        | Minimal relevance (filtered out by default)    | Typically safe to ignore              |
+
+#### 2. Workaround Classification
+
+The LLM identifies solutions from issue comments and classifies them:
+
+**Author Types:**
+
+- **Maintainer**: Official solutions from project team members (highest reliability)
+- **Contributor**: Solutions from regular contributors (good reliability)
+- **User**: Community-suggested solutions (variable reliability)
+
+**Effectiveness Ratings:**
+
+- **Confirmed**: Solution verified to work (highest confidence)
+- **Suggested**: Proposed solution without verification (medium confidence)
+- **Partial**: Solution that works in some cases (limited confidence)
+
+**Confidence Score:**
+
+- A percentage (0-100%) indicating the LLM's confidence in the solution
+- Higher scores (80%+) indicate more reliable workarounds
+
+#### 3. Sample Analysis Interpretation
+
+For the example above:
+
+- The issue has **very high relevance** (92/100) to the product area
+- It's categorized as a **"Performance Degradation"** issue with **high priority**
+- There are **two workarounds**:
+  1. An **official solution** from the VS Code team (95% confidence)
+  2. A **community suggestion** with good but lower confidence (80%)
+- The issue has a **negative sentiment**, indicating user frustration
+- It's tagged with relevant keywords for easy categorization
+
+#### 4. Factors Affecting Analysis Quality
+
+- **Model selection**: Different JAN models have different analysis capabilities
+- **Issue complexity**: More complex issues may have less accurate analysis
+- **Comment quality**: Clear, detailed comments yield better workaround extraction
+- **Product area specificity**: More specific product areas yield more focused results
+
+For detailed guidance on interpreting LLM analysis, see:
+
+- [JAN Integration Guide](docs/jan-guide.md)
+- [LLM Analysis Examples](docs/llm-analysis-examples.md)
+````
+
 ## Methodology
 
-Issues were filtered using the following criteria:
+Issues are analyzed using the following LLM-powered approach:
 
-- Keywords: "editor", "performance", "slow", "unresponsive"
-- Minimum relevance score: 30/100
-- Issue state: Open
-- Relevance factors: Determined by LLM analysis of issue content and context
-```
+- **Natural Language Understanding**: LLM comprehends the semantic meaning of issues
+- **Context-Aware Analysis**: LLM considers your product area in its relevance determination
+- **Minimum relevance score**: Configurable threshold (default: 30/100)
+- **Comprehensive Analysis**: Evaluates titles, descriptions, comments, and metadata
+- **Intelligent Workaround Extraction**: Identifies solutions from conversation threads
+
+````
 
 ### Command Output Examples
 
@@ -397,7 +625,7 @@ $ github-issue-scraper -r microsoft/vscode -p "editor performance" --verbose
  ℹ️  Generating report...
  ✅ Report generated: ./reports/microsoft-vscode-editor-performance-2024-07-18.md
  ℹ️  Summary: 23 relevant issues found with 18 containing workarounds
-```
+````
 
 #### Interactive Mode
 
@@ -536,6 +764,116 @@ MIT License - see LICENSE file for details.
 **Happy Issue Scraping!** 🚀
 
 ## Troubleshooting
+
+### JAN Integration Issues
+
+#### Problem: `JAN server connection failed`
+
+```bash
+Error: Cannot connect to JAN server at http://localhost:1337. Is JAN running?
+```
+
+**Solutions**:
+
+1. **Check if JAN is running**:
+
+   - Open the JAN application
+   - Verify it's running and the interface is accessible
+   - Check the status indicator in the JAN UI
+
+2. **Verify endpoint configuration**:
+
+   ```bash
+   # Test JAN connectivity
+   github-issue-scraper --test-jan
+
+   # Specify custom endpoint if needed
+   github-issue-scraper --test-jan --jan-endpoint http://localhost:1337
+   ```
+
+3. **Restart JAN**:
+   - Close and reopen the JAN application
+   - Wait for it to fully initialize before retrying
+
+#### Problem: `Model not found in JAN`
+
+```bash
+Error: Model 'llama2' is not loaded in JAN. Available models: mistral, phi
+```
+
+**Solutions**:
+
+1. **Load the model in JAN**:
+
+   - Open JAN application
+   - Go to the Models tab
+   - Download and load the required model
+
+2. **Use an available model**:
+
+   ```bash
+   # List available models
+   github-issue-scraper --test-jan
+
+   # Use an available model
+   github-issue-scraper -r owner/repo -p "keywords" --jan-model mistral
+   ```
+
+3. **Check model name spelling**:
+   - Model names are case-sensitive
+   - Use the exact name as shown in JAN's interface
+
+#### Problem: `LLM context length exceeded`
+
+```bash
+Error: LLM context length exceeded during analysis.
+```
+
+**Solutions**:
+
+1. **Reduce batch size**:
+
+   ```bash
+   # Process fewer issues at once
+   github-issue-scraper -r owner/repo -p "keywords" --max-issues 25
+   ```
+
+2. **Use a model with larger context window**:
+
+   ```bash
+   # Switch to a model with larger context capacity
+   github-issue-scraper -r owner/repo -p "keywords" --jan-model mistral-large
+   ```
+
+3. **Simplify analysis**:
+   - Focus on more specific product areas
+   - Filter issues by labels or state first
+
+#### Problem: `Invalid LLM response format`
+
+```bash
+Error: Failed to parse LLM response as valid JSON.
+```
+
+**Solutions**:
+
+1. **Try a different model**:
+
+   ```bash
+   # Some models produce more consistent outputs
+   github-issue-scraper -r owner/repo -p "keywords" --jan-model llama2
+   ```
+
+2. **Check JAN version**:
+
+   - Ensure you're using a recent version of JAN
+   - Update JAN if necessary
+
+3. **Reduce complexity**:
+   ```bash
+   # Process fewer issues at once
+   github-issue-scraper -r owner/repo -p "keywords" --max-issues 10
+   ```
 
 ### Common Issues and Solutions
 

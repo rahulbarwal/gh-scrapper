@@ -48,7 +48,7 @@ class GitHubIssueScraperCLI {
     this.program
       .name("github-issue-scraper")
       .description(
-        "A CLI tool for scraping GitHub issues within specific repositories and product areas"
+        "A CLI tool for scraping GitHub issues within specific repositories and product areas using LLM-powered analysis via JAN"
       )
       .version("1.0.0")
       .option(
@@ -101,6 +101,44 @@ Examples:
   $ github-issue-scraper -r owner/repo -p "api bugs" --verbose
   $ github-issue-scraper --test-jan
   $ github-issue-scraper -r owner/repo -p "api" --jan-endpoint http://localhost:1337 --jan-model mistral
+
+JAN Integration:
+  This tool uses JAN's local LLM for intelligent issue analysis. JAN provides:
+  - LLM-powered relevance scoring based on natural language understanding
+  - Intelligent workaround extraction from issue comments
+  - Comprehensive issue summarization and categorization
+  - Sentiment analysis and priority determination
+  - Automatic categorization of issues into meaningful groups
+  - Confidence ratings for identified workarounds
+
+JAN Setup:
+  1. Install JAN from https://jan.ai/
+  2. Start the JAN application
+  3. Load your preferred model (llama2, mistral, etc.)
+  4. Run 'github-issue-scraper --test-jan' to verify connectivity
+  5. Configure JAN options with '--jan-endpoint' and '--jan-model'
+
+JAN Model Selection Guide:
+  - llama2: Good balance of performance and resource usage (default)
+  - mistral: Excellent analysis capabilities, better workaround extraction
+  - phi: Lightweight option for systems with limited resources
+  - llama3: Comprehensive understanding, best for in-depth analysis
+  - For detailed model comparison, see docs/jan-guide.md
+
+JAN Troubleshooting:
+  - Ensure JAN is running before starting the scraper
+  - Check that your selected model is loaded in JAN
+  - For large repositories, use smaller batch sizes or more powerful models
+  - If analysis fails, try a different model or reduce the number of issues
+  - Run with '--verbose' for detailed JAN interaction logs
+  - See detailed guide: docs/jan-guide.md
+
+Understanding LLM Analysis:
+  - Relevance scores (0-100) indicate how closely an issue matches your product area
+  - Workarounds are classified by author type (maintainer, contributor, user)
+  - Effectiveness ratings show confidence in solution validity
+  - LLM automatically categorizes issues based on patterns and similarities
+  - For interpretation guide, see the generated report's "LLM Analysis Details" section
 
 Environment Variables:
   GITHUB_TOKEN          GitHub personal access token
@@ -688,7 +726,6 @@ Configuration:
 
       if (validationErrors.length > 0) {
         // Create a comprehensive validation error
-        const firstError = validationErrors[0];
         const allSuggestions = validationErrors.flatMap((e) => e.suggestions);
 
         throw ErrorHandler.handleValidationError(
@@ -908,22 +945,38 @@ Configuration:
         console.log("   Wait: A few minutes and retry");
         break;
 
-      case ErrorType.LLM_SERVICE:
+      case "LLM_SERVICE":
         console.log("\n🔧 JAN Connection Help:");
         console.log("   Check: Is JAN running at the configured endpoint?");
         console.log("   Run: github-issue-scraper --test-jan");
         console.log("   Try: --jan-endpoint http://localhost:1337");
         console.log("   Or: Set JAN_ENDPOINT environment variable");
+        console.log(
+          "   Verify: Open http://localhost:1337/health in your browser"
+        );
+        console.log(
+          "   Install: Download JAN from https://jan.ai/ if not installed"
+        );
+        console.log("   Models: Ensure a model is loaded in JAN's interface");
         break;
 
-      case ErrorType.LLM_RESPONSE:
+      case "LLM_RESPONSE":
         console.log("\n🔧 JAN Response Help:");
+        console.log(
+          "   Model: Try a different model with '--jan-model mistral'"
+        );
+        console.log("   Batch: Reduce batch size with '--max-issues 10'");
+        console.log("   Check: Ensure your model is fully loaded in JAN");
+        console.log("   Update: Make sure you're using the latest JAN version");
+        console.log(
+          "   Guide: See detailed troubleshooting in docs/jan-guide.md"
+        );
         console.log("   Check: Is the LLM generating valid responses?");
         console.log("   Try: Using a different model");
         console.log("   Or: Reduce batch size with --batch-size option");
         break;
 
-      case ErrorType.LLM_CONTEXT:
+      case "LLM_CONTEXT":
         console.log("\n🔧 JAN Model Help:");
         console.log("   Check: Is the model loaded in JAN?");
         console.log("   Run: github-issue-scraper --test-jan");
