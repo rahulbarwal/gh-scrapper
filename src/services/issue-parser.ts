@@ -112,67 +112,6 @@ export class IssueParser {
   }
 
   /**
-   * Analyze comments to identify workaround patterns
-   */
-  analyzeComments(comments: Comment[]): Comment[] {
-    if (!Array.isArray(comments)) {
-      console.warn("Invalid comments data provided, expected array");
-      return [];
-    }
-
-    return comments
-      .filter((comment) => {
-        // Filter out malformed comments
-        if (!comment || typeof comment !== "object") {
-          console.warn(
-            `Skipping malformed comment: ${JSON.stringify(comment)}`
-          );
-          return false;
-        }
-        if (!comment.body || typeof comment.body !== "string") {
-          console.warn(`Skipping comment with invalid body: ${comment.id}`);
-          return false;
-        }
-        return true;
-      })
-      .map((comment) => {
-        try {
-          return {
-            ...comment,
-            isWorkaround: this.isWorkaroundComment(comment),
-          };
-        } catch (error: any) {
-          console.warn(
-            `Error analyzing comment ${comment.id}: ${error.message}`
-          );
-          return {
-            ...comment,
-            isWorkaround: false, // Default to false on error
-          };
-        }
-      });
-  }
-
-  /**
-   * Extract workarounds from comments with author classification
-   */
-  extractWorkarounds(comments: Comment[]): Workaround[] {
-    const workarounds: Workaround[] = [];
-
-    for (const comment of comments) {
-      if (comment.isWorkaround) {
-        const workaround = this.createWorkaround(comment);
-        if (workaround) {
-          workarounds.push(workaround);
-        }
-      }
-    }
-
-    // Sort by effectiveness and author authority
-    return this.sortWorkarounds(workarounds);
-  }
-
-  /**
    * Generate executive summary for an issue
    */
   generateSummary(
@@ -332,53 +271,6 @@ export class IssueParser {
   }
 
   /**
-   * Check if a comment contains workaround patterns
-   */
-  private isWorkaroundComment(comment: Comment): boolean {
-    const text = comment.body.toLowerCase();
-    const hasCodeBlock = this.codeBlockRegex.test(comment.body);
-
-    for (const pattern of this.workaroundPatterns) {
-      const hasKeyword = pattern.keywords.some((keyword) =>
-        text.includes(keyword.toLowerCase())
-      );
-
-      if (hasKeyword) {
-        // If pattern requires code block, check for it
-        if (pattern.codeBlockRequired && !hasCodeBlock) {
-          continue;
-        }
-        return true;
-      }
-    }
-
-    // Additional heuristics
-    return (
-      this.hasWorkaroundStructure(text) ||
-      this.hasStepByStepInstructions(text) ||
-      (hasCodeBlock && this.hasActionWords(text))
-    );
-  }
-
-  /**
-   * Create workaround object from comment
-   */
-  private createWorkaround(comment: Comment): Workaround | null {
-    const description = this.extractWorkaroundDescription(comment.body);
-    if (!description) return null;
-
-    const effectiveness = this.determineEffectiveness(comment);
-
-    return {
-      description,
-      author: comment.author,
-      authorType: comment.authorType,
-      commentId: comment.id,
-      effectiveness,
-    };
-  }
-
-  /**
    * Extract clean workaround description from comment
    */
   private extractWorkaroundDescription(commentBody: string): string {
@@ -391,36 +283,6 @@ export class IssueParser {
     }
 
     return description;
-  }
-
-  /**
-   * Determine workaround effectiveness based on comment characteristics
-   */
-  private determineEffectiveness(
-    comment: Comment
-  ): "confirmed" | "suggested" | "partial" {
-    const text = comment.body.toLowerCase();
-
-    // Check for confirmation indicators
-    if (
-      text.includes("confirmed") ||
-      text.includes("tested") ||
-      text.includes("verified") ||
-      comment.authorType === "maintainer"
-    ) {
-      return "confirmed";
-    }
-
-    // Check for partial solution indicators
-    if (
-      text.includes("partial") ||
-      text.includes("workaround") ||
-      text.includes("temporary")
-    ) {
-      return "partial";
-    }
-
-    return "suggested";
   }
 
   /**

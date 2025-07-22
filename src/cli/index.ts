@@ -459,18 +459,19 @@ Setup:
       }
 
       // Merge options with current config
-      const mergedConfig: Partial<Config> = {
-        ...currentConfig,
-        repository: options.repository || currentConfig.repository,
-        productArea: options.productArea || currentConfig.productArea,
-        maxIssues: options.maxIssues || currentConfig.maxIssues || 50,
-        minRelevanceScore:
-          options.minRelevanceScore || currentConfig.minRelevanceScore || 30,
-        outputPath:
-          options.outputPath || currentConfig.outputPath || "./reports",
-        githubToken: this.configManager.getGitHubToken(),
-        janConfig,
-      };
+      const mergedConfig: Partial<Config> = currentConfig;
+      // {
+      //   ...currentConfig,
+      //   repository: options.repository || currentConfig.repository,
+      //   productArea: options.productArea || currentConfig.productArea,
+      //   maxIssues: options.maxIssues || currentConfig.maxIssues || 50,
+      //   minRelevanceScore:
+      //     options.minRelevanceScore || currentConfig.minRelevanceScore || 30,
+      //   outputPath:
+      //     options.outputPath || currentConfig.outputPath || "./reports",
+      //   githubToken: this.configManager.getGitHubToken(),
+      //   janConfig,
+      // };
 
       // Validate the final config
       const validatedConfig = await this.validateConfigOnly(

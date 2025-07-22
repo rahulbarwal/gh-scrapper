@@ -19,6 +19,8 @@ export interface JanAnalysisResult {
   workaroundDescription?: string;
   implementationDifficulty: "easy" | "medium" | "hard" | "unknown";
   summary: string;
+  framework: string; // Framework mentioned in the issue (nextjs, vite, astro, etc.) or "N/A"
+  browser: string; // Browser mentioned in the issue (chrome, firefox, etc.) or "N/A"
 }
 
 export interface JanClientConfig {
@@ -51,12 +53,8 @@ export class JanClient {
       ? Number(process.env.JAN_TIMEOUT)
       : config.timeout || 30000;
 
-    // Validate that model is specified
-    if (!this.model) {
-      throw new Error(
-        "Jan AI model must be specified via JAN_MODEL environment variable or config"
-      );
-    }
+    // Only validate model if Jan AI features will be used
+    // The scraper will handle fallback when Jan AI is not available
   }
 
   /**
@@ -69,11 +67,18 @@ export class JanClient {
     };
 
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      // Only add authorization header if API key is provided
+      if (process.env.JAN_API_KEY) {
+        headers.Authorization = `Bearer ${process.env.JAN_API_KEY}`;
+      }
+
       const response = await fetch(`${this.baseUrl}/models`, {
         method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         signal: AbortSignal.timeout(this.timeout),
       });
 
@@ -109,6 +114,13 @@ export class JanClient {
    * Analyze an issue using Jan AI for relevance and workaround detection
    */
   async analyzeIssue(request: JanAnalysisRequest): Promise<JanAnalysisResult> {
+    // Check if model is configured
+    if (!this.model) {
+      throw new Error(
+        "Jan AI model must be specified via JAN_MODEL environment variable or config"
+      );
+    }
+
     const context: ErrorContext = {
       operation: "analyzing issue with Jan AI",
       issueId: request.issue.id,
@@ -121,19 +133,41 @@ export class JanClient {
         request.productArea
       );
 
+      // Log prompt size for debugging
+      const promptLength = prompt.length;
+      const estimatedTokens = Math.ceil(promptLength / 4);
+
+      if (estimatedTokens > this.maxTokens * 0.8) {
+        console.warn(
+          `Large prompt for issue #${request.issue.number}: ${promptLength} chars (~${estimatedTokens} tokens), max: ${this.maxTokens}`
+        );
+      }
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      // Only add authorization header if API key is provided
+      if (process.env.JAN_API_KEY) {
+        headers.Authorization = `Bearer ${process.env.JAN_API_KEY}`;
+      }
+
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer jan-api-key", // Jan doesn't require real auth for local usage
-        },
+        headers,
         body: JSON.stringify({
           model: this.model,
           messages: [
             {
               role: "system",
-              content:
-                "You are an expert software engineer analyzing GitHub issues for relevance and workarounds. Always respond with valid JSON only, no additional text.",
+              content: `You are an expert software engineer analyzing GitHub issues for relevance and workarounds. 
+                CRITICAL REQUIREMENTS:
+                - Always respond with valid JSON only, no additional text or explanations outside the JSON
+                - Code quotes should use exactly 3 backticks both before and after, no language specification
+                - MUST extract and include framework information (nextjs, vite, astro, react, vue, etc.) - if none found, use "N/A"
+                - MUST extract and include browser information (chrome, firefox, safari, edge, etc.) - if none found, use "N/A"
+                - Look for framework and browser mentions in issue title, description, labels, and comments
+                - Be thorough in extracting technical details from the issue content`,
             },
             {
               role: "user",
@@ -148,9 +182,24 @@ export class JanClient {
       });
 
       if (!response.ok) {
-        throw new Error(
-          `Jan AI API error: ${response.status} ${response.statusText}`
-        );
+        let errorDetails = `${response.status} ${response.statusText}`;
+
+        // Try to get more specific error information
+        try {
+          const errorBody = await response.text();
+          if (errorBody) {
+            errorDetails += ` - ${errorBody}`;
+          }
+        } catch {
+          // If we can't read the error body, just use the status
+        }
+
+        // Add helpful context for common errors
+        if (response.status === 400) {
+          errorDetails += ` (Possible causes: request too large, invalid model, or malformed JSON)`;
+        }
+
+        throw new Error(`Jan AI API error: ${errorDetails}`);
       }
 
       const result: any = await response.json();
@@ -209,6 +258,25 @@ export class JanClient {
    * Build the analysis prompt for the LLM
    */
   private buildAnalysisPrompt(issue: GitHubIssue, productArea: string): string {
+    // Calculate rough token estimate (1 token ≈ 4 characters)
+    const maxPromptChars = this.maxTokens * 3; // Leave room for response
+    const fixedContentChars = 1500; // Estimate for fixed content and instructions
+    const availableChars = maxPromptChars - fixedContentChars;
+
+    // Truncate description intelligently
+    const maxDescriptionChars = Math.min(800, availableChars * 0.4);
+    const truncatedDescription = this.truncateText(
+      issue.description || "No description provided",
+      maxDescriptionChars
+    );
+
+    // Prepare comments with intelligent truncation
+    const maxCommentsChars = Math.min(1200, availableChars * 0.6);
+    const commentsText = this.prepareCommentsText(
+      issue.comments,
+      maxCommentsChars
+    );
+
     const issueContent = `
 **GitHub Issue Analysis Request**
 
@@ -216,24 +284,13 @@ export class JanClient {
 
 **Issue #${issue.number}**: ${issue.title}
 **Labels**: ${issue.labels.join(", ") || "None"}
-**Description**: ${issue.description || "No description provided"}
+**Description**: ${truncatedDescription}
 **State**: ${issue.state}
 **Created**: ${issue.createdAt.toISOString()}
 **Updated**: ${issue.updatedAt.toISOString()}
 **Author**: ${issue.author}
 
-**Comments**: ${
-      issue.comments.length > 0
-        ? issue.comments
-            .map(
-              (c) =>
-                `- ${c.author}: ${c.body.substring(0, 200)}${
-                  c.body.length > 200 ? "..." : ""
-                }`
-            )
-            .join("\n")
-        : "No comments"
-    }
+**Comments**: ${commentsText}
 
 **Analysis Instructions**:
 Please analyze this GitHub issue and provide a JSON response with the following structure:
@@ -246,7 +303,9 @@ Please analyze this GitHub issue and provide a JSON response with the following 
   "workaroundType": "usage-level|code-level|architecture-level|unknown",
   "workaroundDescription": "Brief description of the workaround if available",
   "implementationDifficulty": "easy|medium|hard|unknown",
-  "summary": "Concise summary of the issue and its impact"
+  "summary": "Concise summary of the issue and its impact",
+  "framework": "nextjs|vite|astro|react|vue|N/A",
+  "browser": "chrome|firefox|safari|edge|N/A"
 }
 
 **Scoring Guidelines**:
@@ -260,11 +319,124 @@ Please analyze this GitHub issue and provide a JSON response with the following 
   - "architecture-level": Requires changes to the core library/framework
 - implementationDifficulty: How hard would it be to implement the workaround?
 - summary: 1-2 sentences about the issue's core problem and impact
+- framework: Extract any framework mentioned (nextjs, vite, astro, react, vue, etc.) or "N/A" if none found
+- browser: Extract any browser mentioned (chrome, firefox, safari, edge, etc.) or "N/A" if none found
 
 Focus on practical analysis that helps developers understand if this issue affects their use of ${productArea} and what they can do about it.
 `.trim();
 
     return issueContent;
+  }
+
+  /**
+   * Intelligently prepare comments text within character limits
+   */
+  private prepareCommentsText(comments: any[], maxChars: number): string {
+    if (comments.length === 0) {
+      return "No comments";
+    }
+
+    // Prioritize comments that are more likely to contain workarounds
+    const prioritizedComments = comments
+      .map((comment, index) => ({
+        ...comment,
+        originalIndex: index,
+        priority: this.calculateCommentPriority(comment),
+      }))
+      .sort((a, b) => b.priority - a.priority);
+
+    const result: string[] = [];
+    let currentChars = 0;
+
+    for (const comment of prioritizedComments) {
+      const maxCommentChars = Math.min(300, (maxChars - currentChars) / 2);
+      if (maxCommentChars < 50) break; // Not enough space for meaningful content
+
+      const truncatedBody = this.truncateText(comment.body, maxCommentChars);
+      const commentText = `- ${comment.author}: ${truncatedBody}`;
+
+      if (currentChars + commentText.length > maxChars) {
+        break;
+      }
+
+      result.push(commentText);
+      currentChars += commentText.length;
+    }
+
+    const totalComments = comments.length;
+    const includedComments = result.length;
+
+    if (includedComments < totalComments) {
+      result.push(
+        `... [${
+          totalComments - includedComments
+        } more comments omitted for brevity]`
+      );
+    }
+
+    return result.join("\n");
+  }
+
+  /**
+   * Calculate priority for comments (higher = more likely to contain workarounds)
+   */
+  private calculateCommentPriority(comment: any): number {
+    let priority = 0;
+    const bodyLower = comment.body.toLowerCase();
+
+    // Workaround indicators
+    if (bodyLower.includes("workaround")) priority += 10;
+    if (bodyLower.includes("solution")) priority += 8;
+    if (bodyLower.includes("fix")) priority += 6;
+    if (bodyLower.includes("resolve")) priority += 6;
+    if (bodyLower.includes("temp")) priority += 5;
+    if (bodyLower.includes("alternative")) priority += 5;
+
+    // Code indicators
+    if (bodyLower.includes("```")) priority += 4;
+    if (bodyLower.includes("import ")) priority += 3;
+    if (bodyLower.includes("export ")) priority += 3;
+
+    // Authority indicators (maintainers/contributors likely have better solutions)
+    if (comment.authorType === "maintainer") priority += 8;
+    if (comment.authorType === "contributor") priority += 4;
+
+    return priority;
+  }
+
+  /**
+   * Intelligently truncate text while preserving meaning
+   */
+  private truncateText(text: string, maxChars: number): string {
+    if (text.length <= maxChars) {
+      return text;
+    }
+
+    // Try to truncate at sentence boundaries
+    const sentences = text.split(/[.!?]+/);
+    let result = "";
+
+    for (const sentence of sentences) {
+      const candidate = result + sentence + ".";
+      if (candidate.length > maxChars) {
+        break;
+      }
+      result = candidate;
+    }
+
+    // If no complete sentences fit, truncate at word boundary
+    if (result.length === 0) {
+      const words = text.split(" ");
+      for (const word of words) {
+        const candidate = result + (result ? " " : "") + word;
+        if (candidate.length > maxChars - 3) {
+          break;
+        }
+        result = candidate;
+      }
+    }
+
+    return result + (result.length < text.length ? "..." : "");
   }
 
   /**
@@ -299,6 +471,8 @@ Focus on practical analysis that helps developers understand if this issue affec
         "unknown"
       ),
       summary: String(analysis.summary || "No summary provided"),
+      framework: String(analysis.framework || "N/A"),
+      browser: String(analysis.browser || "N/A"),
     };
 
     return result;
@@ -328,6 +502,8 @@ Focus on practical analysis that helps developers understand if this issue affec
       workaroundType: "unknown",
       implementationDifficulty: "unknown",
       summary: `Issue #${issue.number}: ${issue.title}`,
+      framework: "N/A",
+      browser: "N/A",
     };
   }
 }

@@ -55,6 +55,9 @@ export class ReportGenerator {
       report += this.generateMetadataSection(metadata);
     }
 
+    // Generate technical summary (framework/browser analysis)
+    report += this.generateTechnicalSummary(sortedIssues);
+
     // Generate table of contents
     if (opts.includeTableOfContents) {
       report += this.generateTableOfContents(sortedIssues);
@@ -262,6 +265,100 @@ export class ReportGenerator {
   }
 
   /**
+   * Generate technical summary section with framework and browser statistics
+   */
+  private generateTechnicalSummary(issues: GitHubIssue[]): string {
+    const issuesWithAnalysis = issues.filter((issue) => issue.janAnalysis);
+
+    if (issuesWithAnalysis.length === 0) {
+      return "";
+    }
+
+    // Count frameworks
+    const frameworkCounts = new Map<string, number>();
+    const browserCounts = new Map<string, number>();
+    const complexityCounts = new Map<string, number>();
+    const typeCounts = new Map<string, number>();
+
+    issuesWithAnalysis.forEach((issue) => {
+      const analysis = issue.janAnalysis!;
+
+      // Framework stats
+      if (analysis.framework && analysis.framework !== "N/A") {
+        frameworkCounts.set(
+          analysis.framework,
+          (frameworkCounts.get(analysis.framework) || 0) + 1
+        );
+      }
+
+      // Browser stats
+      if (analysis.browser && analysis.browser !== "N/A") {
+        browserCounts.set(
+          analysis.browser,
+          (browserCounts.get(analysis.browser) || 0) + 1
+        );
+      }
+
+      // Complexity stats
+      if (analysis.hasWorkaround) {
+        complexityCounts.set(
+          analysis.workaroundComplexity,
+          (complexityCounts.get(analysis.workaroundComplexity) || 0) + 1
+        );
+        typeCounts.set(
+          analysis.workaroundType,
+          (typeCounts.get(analysis.workaroundType) || 0) + 1
+        );
+      }
+    });
+
+    let summary = `## Technical Analysis Summary\n\n`;
+
+    // Framework breakdown
+    if (frameworkCounts.size > 0) {
+      summary += `### Frameworks Mentioned\n\n`;
+      Array.from(frameworkCounts.entries())
+        .sort(([, a], [, b]) => b - a)
+        .forEach(([framework, count]) => {
+          summary += `- **${framework}**: ${count} issue(s)\n`;
+        });
+      summary += `\n`;
+    }
+
+    // Browser breakdown
+    if (browserCounts.size > 0) {
+      summary += `### Browsers Mentioned\n\n`;
+      Array.from(browserCounts.entries())
+        .sort(([, a], [, b]) => b - a)
+        .forEach(([browser, count]) => {
+          summary += `- **${browser}**: ${count} issue(s)\n`;
+        });
+      summary += `\n`;
+    }
+
+    // Workaround analysis
+    if (complexityCounts.size > 0) {
+      summary += `### Workaround Analysis\n\n`;
+      summary += `**Complexity Distribution:**\n`;
+      Array.from(complexityCounts.entries())
+        .sort(([, a], [, b]) => b - a)
+        .forEach(([complexity, count]) => {
+          summary += `- ${complexity}: ${count} issue(s)\n`;
+        });
+
+      summary += `\n**Type Distribution:**\n`;
+      Array.from(typeCounts.entries())
+        .sort(([, a], [, b]) => b - a)
+        .forEach(([type, count]) => {
+          summary += `- ${type}: ${count} issue(s)\n`;
+        });
+      summary += `\n`;
+    }
+
+    return summary;
+  }
+
+  /**
    * Generate table of contents
    */
   private generateTableOfContents(issues: GitHubIssue[]): string {
@@ -339,6 +436,29 @@ export class ReportGenerator {
     }
 
     formatted += "\n";
+
+    // Jan AI Analysis Results (if available)
+    if (issue.janAnalysis) {
+      formatted += `#### Jan AI Analysis\n\n`;
+      formatted += `**Relevance Reasoning**: ${issue.janAnalysis.relevanceReasoning}\n`;
+      formatted += `**Framework**: ${issue.janAnalysis.framework}\n`;
+      formatted += `**Browser**: ${issue.janAnalysis.browser}\n`;
+      formatted += `**Has Workaround**: ${
+        issue.janAnalysis.hasWorkaround ? "Yes" : "No"
+      }\n`;
+
+      if (issue.janAnalysis.hasWorkaround) {
+        formatted += `**Workaround Complexity**: ${issue.janAnalysis.workaroundComplexity}\n`;
+        formatted += `**Workaround Type**: ${issue.janAnalysis.workaroundType}\n`;
+        formatted += `**Implementation Difficulty**: ${issue.janAnalysis.implementationDifficulty}\n`;
+
+        if (issue.janAnalysis.workaroundDescription) {
+          formatted += `**Workaround Description**: ${issue.janAnalysis.workaroundDescription}\n`;
+        }
+      }
+
+      formatted += `**AI Summary**: ${issue.janAnalysis.summary}\n\n`;
+    }
 
     // Summary
     if (issue.summary) {

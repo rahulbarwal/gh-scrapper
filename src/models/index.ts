@@ -51,6 +51,8 @@ export interface JanAnalysisResult {
   workaroundDescription?: string;
   implementationDifficulty: "easy" | "medium" | "hard" | "unknown";
   summary: string;
+  framework: string; // Framework mentioned in the issue (nextjs, vite, astro, etc.) or "N/A"
+  browser: string; // Browser mentioned in the issue (chrome, firefox, etc.) or "N/A"
 }
 
 export interface Config {
@@ -75,6 +77,6 @@ export interface ScrapingMetadata {
   relevantIssuesFound: number;
   averageRelevanceScore: number;
   workaroundsFound: number;
-  analysisMethod: "jan-ai" | "manual-fallback" | "mixed";
+  analysisMethod: "jan-ai" | "manual-fallback";
   janConnectionStatus?: string;
 }
