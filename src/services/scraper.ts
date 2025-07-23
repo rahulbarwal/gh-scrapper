@@ -1,5 +1,10 @@
 import { GitHubClient } from "./github-client";
 import { JanClient, JanAnalysisRequest } from "./jan-client";
+import {
+  AIProviderService,
+  AIAnalysisRequest,
+  AIProviderConfig,
+} from "./ai-provider";
 import { IssueParser } from "./issue-parser";
 import { ReportGenerator, ReportMetadata } from "./report-generator";
 import { GitHubIssue, Config, ScrapingMetadata } from "../models";
@@ -20,15 +25,40 @@ export interface ScrapingResult {
 
 export class GitHubIssueScraper {
   private githubClient: GitHubClient;
-  private janClient: JanClient;
+  private aiProvider?: AIProviderService;
+  private janClient?: JanClient; // Legacy support
   private issueParser: IssueParser;
   private reportGenerator: ReportGenerator;
 
-  constructor(githubToken: string, janConfig?: Config["janConfig"]) {
+  constructor(githubToken: string, configLegacy?: Config["janConfig"]) {
     this.githubClient = new GitHubClient(githubToken);
-    this.janClient = new JanClient(janConfig);
     this.issueParser = new IssueParser();
     this.reportGenerator = new ReportGenerator();
+
+    // Legacy support for Jan-only configuration
+    if (configLegacy) {
+      this.janClient = new JanClient(configLegacy);
+    }
+  }
+
+  /**
+   * Initialize AI provider based on configuration
+   */
+  initializeAIProvider(config: Config): void {
+    if (!config.aiProvider && !config.janConfig && !config.geminiConfig) {
+      // No AI configuration provided
+      return;
+    }
+
+    const provider = config.aiProvider || "jan";
+
+    const aiConfig: AIProviderConfig = {
+      provider,
+      janConfig: config.janConfig,
+      geminiConfig: config.geminiConfig,
+    };
+
+    this.aiProvider = new AIProviderService(aiConfig);
   }
 
   /**
@@ -45,20 +75,55 @@ export class GitHubIssueScraper {
     };
 
     return ErrorHandler.executeWithRetry(async () => {
-      // Phase 1: Test Jan AI connection
+      // Initialize AI provider if not already done
+      if (!this.aiProvider && !this.janClient) {
+        this.initializeAIProvider(config);
+      }
+
+      // Phase 1: Test AI connection
       onProgress?.({
         phase: "fetching",
         current: 0,
         total: 100,
-        message: "Testing Jan AI connection...",
+        message: "Testing AI connection...",
       });
 
-      const connectionStatus = await this.janClient.testConnection();
-      let analysisMethod: ScrapingMetadata["analysisMethod"] = "jan-ai";
+      let connectionStatus: {
+        connected: boolean;
+        error?: string;
+        provider?: string;
+      };
+      let analysisMethod: ScrapingMetadata["analysisMethod"] =
+        "manual-fallback";
+      let aiProvider = "none";
+
+      if (this.aiProvider) {
+        connectionStatus = await this.aiProvider.testConnection();
+        const providerInfo = this.aiProvider.getProviderInfo();
+        aiProvider = providerInfo.provider;
+
+        if (connectionStatus.connected) {
+          analysisMethod =
+            config.aiProvider === "gemini" ? "gemini-ai" : "jan-ai";
+        }
+      } else if (this.janClient) {
+        // Legacy Jan client support
+        connectionStatus = await this.janClient.testConnection();
+        aiProvider = "Jan AI (Local)";
+
+        if (connectionStatus.connected) {
+          analysisMethod = "jan-ai";
+        }
+      } else {
+        connectionStatus = {
+          connected: false,
+          error: "No AI provider configured",
+        };
+      }
 
       if (!connectionStatus.connected) {
-        console.error(`Jan AI not available: ${connectionStatus.error}`);
-        throw new Error(`Jan AI not available: ${connectionStatus.error}`);
+        console.error(`AI not available: ${connectionStatus.error}`);
+        throw new Error(`AI not available: ${connectionStatus.error}`);
       }
 
       // Phase 2: Search for relevant issues using GitHub's search API
@@ -91,15 +156,15 @@ export class GitHubIssueScraper {
         onProgress
       );
 
-      // Phase 4: Analyze complete issues (body + comments) with Jan AI
+      // Phase 4: Analyze complete issues (body + comments) with AI
       onProgress?.({
         phase: "analyzing",
         current: 0,
         total: issuesWithDetails.length,
-        message: "Analyzing issues with Jan AI...",
+        message: `Analyzing issues with ${aiProvider}...`,
       });
 
-      const analyzedIssues = await this.analyzeCompleteIssuesWithJanAI(
+      const analyzedIssues = await this.analyzeCompleteIssuesWithAI(
         issuesWithDetails,
         config,
         onProgress
@@ -152,9 +217,10 @@ export class GitHubIssueScraper {
         averageRelevanceScore: Math.round(averageRelevanceScore * 100) / 100,
         workaroundsFound,
         analysisMethod,
-        janConnectionStatus: connectionStatus.connected
+        aiConnectionStatus: connectionStatus.connected
           ? "connected"
           : connectionStatus.error,
+        aiProvider,
       };
 
       return {
@@ -257,13 +323,117 @@ export class GitHubIssueScraper {
   }
 
   /**
-   * Phase 3: Analyze complete issues (with comments) using Jan AI
+   * Phase 3: Analyze complete issues (with comments) using AI
+   */
+  private async analyzeCompleteIssuesWithAI(
+    issues: GitHubIssue[],
+    config: Config,
+    onProgress?: (progress: ScrapingProgress) => void
+  ): Promise<GitHubIssue[]> {
+    if (this.aiProvider) {
+      return this.analyzeWithAIProvider(issues, config, onProgress);
+    } else if (this.janClient) {
+      return this.analyzeCompleteIssuesWithJanAI(issues, config, onProgress);
+    } else {
+      throw new Error("No AI provider available for analysis");
+    }
+  }
+
+  /**
+   * Analyze issues using the new AI provider service
+   */
+  private async analyzeWithAIProvider(
+    issues: GitHubIssue[],
+    config: Config,
+    onProgress?: (progress: ScrapingProgress) => void
+  ): Promise<GitHubIssue[]> {
+    if (!this.aiProvider) {
+      throw new Error("AI provider not initialized");
+    }
+
+    // Prepare analysis requests with complete issue data
+    const analysisRequests: AIAnalysisRequest[] = issues.map((issue) => ({
+      issue,
+      productArea: config.productArea,
+    }));
+
+    // Analyze issues in batches
+    const analysisResults = await this.aiProvider.analyzeIssuesBatch(
+      analysisRequests
+    );
+
+    const provider = this.aiProvider.getProvider();
+
+    // Combine issues with analysis results
+    const analyzedIssues = issues.map((issue, index) => {
+      const analysis = analysisResults[index];
+
+      onProgress?.({
+        phase: "analyzing",
+        current: index + 1,
+        total: issues.length,
+        message: `Analyzed issue #${issue.number} (${analysis.relevanceScore}% relevant)`,
+      });
+
+      return {
+        ...issue,
+        relevanceScore: analysis.relevanceScore,
+        summary: analysis.summary,
+        aiAnalysis: {
+          ...analysis,
+          provider,
+        },
+        // Keep Jan analysis for backward compatibility if using Jan
+        janAnalysis:
+          provider === "jan"
+            ? {
+                relevanceScore: analysis.relevanceScore,
+                relevanceReasoning: analysis.relevanceReasoning,
+                hasWorkaround: analysis.hasWorkaround,
+                workaroundComplexity: analysis.workaroundComplexity,
+                workaroundType: analysis.workaroundType,
+                workaroundDescription: analysis.workaroundDescription,
+                implementationDifficulty: analysis.implementationDifficulty,
+                summary: analysis.summary,
+                framework: analysis.framework,
+                browser: analysis.browser,
+              }
+            : undefined,
+        workarounds:
+          analysis.hasWorkaround && analysis.workaroundDescription
+            ? [
+                {
+                  description: analysis.workaroundDescription,
+                  author: `${
+                    provider === "jan" ? "Jan" : "Gemini"
+                  } AI Analysis`,
+                  authorType: "contributor" as const,
+                  commentId: -1,
+                  effectiveness: "suggested" as const,
+                  complexity: analysis.workaroundComplexity,
+                  type: analysis.workaroundType,
+                  implementationDifficulty: analysis.implementationDifficulty,
+                },
+              ]
+            : [],
+      };
+    });
+
+    return analyzedIssues;
+  }
+
+  /**
+   * Phase 3: Analyze complete issues (with comments) using Jan AI (Legacy)
    */
   private async analyzeCompleteIssuesWithJanAI(
     issues: GitHubIssue[],
     config: Config,
     onProgress?: (progress: ScrapingProgress) => void
   ): Promise<GitHubIssue[]> {
+    if (!this.janClient) {
+      throw new Error("Jan client not initialized");
+    }
+
     // Prepare analysis requests with complete issue data
     const analysisRequests: JanAnalysisRequest[] = issues.map((issue) => ({
       issue,

@@ -2,7 +2,12 @@
 
 import { Command } from "commander";
 import * as readline from "readline";
-import { ConfigManager, GitHubIssueScraper, JanClient } from "../services";
+import {
+  ConfigManager,
+  GitHubIssueScraper,
+  JanClient,
+  AIProviderService,
+} from "../services";
 import { Config } from "../models";
 import {
   ErrorHandler,
@@ -19,7 +24,10 @@ interface CLIOptions {
   verbose?: boolean;
   interactive?: boolean;
   setup?: boolean;
-  // Jan AI options
+  // AI Provider options
+  provider?: "jan" | "gemini";
+  noAi?: boolean;
+  // Jan AI options (deprecated)
   janUrl?: string;
   janModel?: string;
   janTemperature?: number;
@@ -72,6 +80,13 @@ class GitHubIssueScraperCLI {
       .option("-v, --verbose", "Enable verbose logging")
       .option("-i, --interactive", "Run in interactive mode with prompts")
       .option("--setup", "Show setup instructions for GitHub token")
+      // AI Provider options
+      .option(
+        "--provider <provider>",
+        "AI provider to use: jan (local) or gemini (cloud)",
+        "jan"
+      )
+      .option("--no-ai", "Disable AI analysis and use fallback scoring")
       // Jan AI options - DEPRECATED: Use environment variables instead
       .option(
         "--jan-url <url>",
@@ -93,7 +108,7 @@ class GitHubIssueScraperCLI {
         "--jan-timeout <ms>",
         "[DEPRECATED] Use JAN_TIMEOUT environment variable"
       )
-      .option("--no-jan", "Disable Jan AI analysis and use fallback scoring")
+      .option("--no-jan", "[DEPRECATED] Use --no-ai instead")
       .action(async (options: CLIOptions) => {
         this.verbose = options.verbose || false;
         await this.run(options);
@@ -109,21 +124,29 @@ Examples:
   $ github-issue-scraper --interactive
   $ github-issue-scraper --setup
   $ github-issue-scraper -r owner/repo -p "api bugs" --verbose
-  $ github-issue-scraper -r owner/repo -p "ui components" --no-jan
+  $ github-issue-scraper -r owner/repo -p "ui components" --provider gemini
+  $ github-issue-scraper -r owner/repo -p "ui components" --no-ai
 
-Jan AI Configuration (Required for AI Analysis):
-  Set these environment variables for Jan AI to work:
+AI Configuration (Required for AI Analysis):
   
+  For Jan AI (Local):
   export JAN_URL="http://localhost:1337/v1"              # Jan server URL
   export JAN_MODEL="llama-3.2-3b-instruct"              # Model name (required)
   export JAN_TEMPERATURE="0.3"                          # Temperature (optional)
   export JAN_MAX_TOKENS="4000"                          # Max tokens (optional)
   export JAN_TIMEOUT="30000"                            # Timeout in ms (optional)
   
-  The tool uses Jan AI (jan.ai) for intelligent issue analysis and workaround detection.
-  Make sure Jan is running locally with API server enabled at localhost:1337.
+  For Google Gemini (Cloud):
+  export GEMINI_API_KEY="your-api-key-here"             # API key (required)
+  export GEMINI_MODEL="gemini-2.0-flash-001"           # Model name (optional)
+  export GEMINI_TEMPERATURE="0.3"                       # Temperature (optional)
+  export GEMINI_MAX_TOKENS="4000"                       # Max tokens (optional)
+  export GEMINI_TIMEOUT="120000"                        # Timeout in ms (optional)
   
-  Without proper Jan AI setup, the tool will use fallback analysis (--no-jan is implicit).
+  The tool supports Jan AI (jan.ai) for local analysis or Google Gemini for cloud analysis.
+  Use --provider flag to switch between providers (default: jan).
+  
+  Without proper AI setup, the tool will use fallback analysis (--no-ai is implicit).
 
 Environment Variables:
   GITHUB_TOKEN          GitHub personal access token (required)
@@ -133,24 +156,35 @@ Environment Variables:
   MIN_RELEVANCE_SCORE   Default minimum relevance score
   OUTPUT_PATH           Default output directory
   
-  Jan AI Variables (all optional, but JAN_MODEL recommended):
+  Jan AI Variables (for --provider jan):
   JAN_URL               Jan AI server URL (default: http://localhost:1337/v1)
-  JAN_MODEL             Jan AI model name (REQUIRED for AI analysis)
+  JAN_MODEL             Jan AI model name (REQUIRED for Jan AI analysis)
   JAN_TEMPERATURE       Jan AI temperature (default: 0.3)
   JAN_MAX_TOKENS        Jan AI max tokens (default: 4000)
   JAN_TIMEOUT           Jan AI timeout in milliseconds (default: 30000)
+  
+  Gemini AI Variables (for --provider gemini):
+  GEMINI_API_KEY        Google Gemini API key (REQUIRED for Gemini analysis)
+  GEMINI_MODEL          Gemini model name (default: gemini-2.0-flash-001)
+  GEMINI_TEMPERATURE    Gemini temperature (default: 0.3)
+  GEMINI_MAX_TOKENS     Gemini max tokens (default: 4000)
+  GEMINI_TIMEOUT        Gemini timeout in milliseconds (default: 120000)
 
 Setup:
   1. Get GitHub token: https://github.com/settings/tokens
   2. Set environment: export GITHUB_TOKEN=your_token_here
-  3. Install Jan AI (Recommended):
+  3a. For Jan AI (Local):
      → Download from: https://jan.ai
      → Open Jan and go to Settings
      → Enable 'API Server' in Advanced settings
      → Download a model (e.g., Llama 3.2 3B Instruct)
      → Start the model
-  4. Set Jan environment: export JAN_MODEL="your-model-name"
-  5. Test: github-issue-scraper -r microsoft/vscode -p authentication --max-issues 5
+     → Set: export JAN_MODEL="your-model-name"
+  3b. For Gemini AI (Cloud):
+     → Get API key from: https://makersuite.google.com/app/apikey
+     → Set: export GEMINI_API_KEY="your-api-key"
+  4. Test: github-issue-scraper -r microsoft/vscode -p authentication --max-issues 5
+  5. Switch providers: --provider gemini or --provider jan
     `
     );
   }
@@ -207,9 +241,9 @@ Setup:
       // Validate and merge options with config
       const config = await this.validateAndMergeConfig(options);
 
-      // Test Jan AI connection if not disabled
-      if (!options.noJan) {
-        await this.testJanConnection(config.janConfig);
+      // Test AI connection if not disabled
+      if (!options.noAi && !options.noJan) {
+        await this.testAIConnection(config);
       }
 
       this.log(`Configuration validated successfully`, "debug");
@@ -219,15 +253,29 @@ Setup:
       this.log(`Min Relevance Score: ${config.minRelevanceScore}`);
       this.log(`Output Path: ${config.outputPath}`);
 
-      if (!options.noJan && config.janConfig) {
-        this.log(`Jan AI URL: ${config.janConfig.baseUrl}`);
-        this.log(
-          `Jan AI Model: ${
-            config.janConfig.model || "Not specified - will use fallback"
-          }`
-        );
+      if (!options.noAi && !options.noJan) {
+        const provider = config.aiProvider || "jan";
+        this.log(`AI Provider: ${provider}`);
+
+        if (provider === "jan" && config.janConfig) {
+          this.log(`Jan AI URL: ${config.janConfig.baseUrl}`);
+          this.log(
+            `Jan AI Model: ${
+              config.janConfig.model || "Not specified - will use fallback"
+            }`
+          );
+        } else if (provider === "gemini" && config.geminiConfig) {
+          this.log(
+            `Gemini AI Model: ${
+              config.geminiConfig.model || "gemini-2.0-flash-001"
+            }`
+          );
+          this.log(
+            `Gemini API Key: ${config.geminiConfig.apiKey ? "Set" : "Not set"}`
+          );
+        }
       } else {
-        this.log(`Jan AI: Disabled (using fallback analysis)`);
+        this.log(`AI Analysis: Disabled (using fallback analysis)`);
       }
 
       // Execute the scraping process
@@ -336,32 +384,28 @@ Setup:
         config.outputPath ||
         "./reports";
 
-      // Jan AI configuration - check environment variables first
-      const existingJanModel = process.env.JAN_MODEL;
-
-      let useJan = true;
-      if (!existingJanModel) {
-        const useJanInput = await this.promptUser(
-          rl,
-          "No JAN_MODEL environment variable found. Use Jan AI anyway? (y/N): "
-        );
-        useJan = useJanInput.toLowerCase() === "y";
-      }
+      // AI Provider configuration
+      const providerInput = await this.promptUser(
+        rl,
+        "Choose AI provider (jan/gemini/none) [jan]: "
+      );
+      const aiProvider = (providerInput || "jan") as "jan" | "gemini" | "none";
 
       let janConfig = undefined;
-      if (useJan) {
-        // Only use environment variables for Jan configuration
+      let geminiConfig = undefined;
+
+      if (aiProvider === "jan") {
+        // Check Jan AI environment variables
+        const existingJanModel = process.env.JAN_MODEL;
         const janUrl = process.env.JAN_URL;
-        const janModel = process.env.JAN_MODEL;
 
-        // Show current environment variable values but don't allow overrides
         console.log(`Current Jan AI URL: ${janUrl || "not set"}`);
-        console.log(`Current Jan AI Model: ${janModel || "not set"}`);
+        console.log(`Current Jan AI Model: ${existingJanModel || "not set"}`);
 
-        if (janModel) {
+        if (existingJanModel) {
           janConfig = {
             baseUrl: janUrl,
-            model: janModel,
+            model: existingJanModel,
           };
           console.log(
             "✅ Using Jan AI configuration from environment variables"
@@ -372,6 +416,36 @@ Setup:
           );
           console.log("💡 Set JAN_MODEL environment variable to enable Jan AI");
         }
+      } else if (aiProvider === "gemini") {
+        // Check Gemini AI environment variables
+        const existingGeminiKey = process.env.GEMINI_API_KEY;
+        const geminiModel = process.env.GEMINI_MODEL;
+
+        console.log(
+          `Current Gemini API Key: ${existingGeminiKey ? "Set" : "Not set"}`
+        );
+        console.log(
+          `Current Gemini Model: ${geminiModel || "gemini-2.0-flash-001"}`
+        );
+
+        if (existingGeminiKey) {
+          geminiConfig = {
+            apiKey: existingGeminiKey,
+            model: geminiModel,
+          };
+          console.log(
+            "✅ Using Gemini AI configuration from environment variables"
+          );
+        } else {
+          console.log(
+            "⚠️  No GEMINI_API_KEY environment variable set - will use fallback analysis"
+          );
+          console.log(
+            "💡 Set GEMINI_API_KEY environment variable to enable Gemini AI"
+          );
+        }
+      } else {
+        console.log("✅ AI analysis disabled - will use fallback analysis");
       }
 
       rl.close();
@@ -384,7 +458,9 @@ Setup:
         maxIssues,
         minRelevanceScore,
         outputPath,
+        aiProvider: aiProvider === "none" ? undefined : aiProvider,
         janConfig,
+        geminiConfig,
       };
 
       await this.validateConfigOnly(finalConfig);
@@ -411,6 +487,22 @@ Setup:
   }
 
   private async validateAndMergeConfig(options: CLIOptions): Promise<Config> {
+    // Handle backward compatibility for --no-jan
+    if (options.noJan) {
+      options.noAi = true;
+      this.log("⚠️  --no-jan is deprecated, use --no-ai instead", "warn");
+    }
+
+    // Determine AI provider
+    let aiProvider: "jan" | "gemini" = "jan"; // Default to jan
+    if (options.provider) {
+      if (options.provider !== "jan" && options.provider !== "gemini") {
+        throw new Error(
+          `Invalid provider: ${options.provider}. Must be 'jan' or 'gemini'`
+        );
+      }
+      aiProvider = options.provider;
+    }
     const context: ErrorContext = {
       operation: "validating configuration",
     };
@@ -446,37 +538,71 @@ Setup:
     try {
       const currentConfig = this.configManager.getConfig();
 
-      // Build Jan AI configuration - use environment variables exclusively
+      // Build AI configuration based on provider
       let janConfig = undefined;
-      if (!options.noJan) {
-        // Only read from environment variables, ignore CLI options for Jan config
-        const baseUrl = process.env.JAN_URL;
-        const model = process.env.JAN_MODEL;
-        const temperature = process.env.JAN_TEMPERATURE
-          ? Number(process.env.JAN_TEMPERATURE)
-          : undefined;
-        const maxTokens = process.env.JAN_MAX_TOKENS
-          ? Number(process.env.JAN_MAX_TOKENS)
-          : undefined;
-        const timeout = process.env.JAN_TIMEOUT
-          ? Number(process.env.JAN_TIMEOUT)
-          : undefined;
+      let geminiConfig = undefined;
 
-        // Only create janConfig if we have at least a model or explicit config
-        if (
-          model ||
-          baseUrl ||
-          temperature !== undefined ||
-          maxTokens !== undefined ||
-          timeout !== undefined
-        ) {
-          janConfig = {
-            baseUrl,
-            model,
-            temperature,
-            maxTokens,
-            timeout,
-          };
+      if (!options.noAi) {
+        if (aiProvider === "jan") {
+          // Only read from environment variables, ignore CLI options for Jan config
+          const baseUrl = process.env.JAN_URL;
+          const model = process.env.JAN_MODEL;
+          const temperature = process.env.JAN_TEMPERATURE
+            ? Number(process.env.JAN_TEMPERATURE)
+            : undefined;
+          const maxTokens = process.env.JAN_MAX_TOKENS
+            ? Number(process.env.JAN_MAX_TOKENS)
+            : undefined;
+          const timeout = process.env.JAN_TIMEOUT
+            ? Number(process.env.JAN_TIMEOUT)
+            : undefined;
+
+          // Only create janConfig if we have at least a model or explicit config
+          if (
+            model ||
+            baseUrl ||
+            temperature !== undefined ||
+            maxTokens !== undefined ||
+            timeout !== undefined
+          ) {
+            janConfig = {
+              baseUrl,
+              model,
+              temperature,
+              maxTokens,
+              timeout,
+            };
+          }
+        } else if (aiProvider === "gemini") {
+          // Configure Gemini from environment variables
+          const apiKey = process.env.GEMINI_API_KEY;
+          const model = process.env.GEMINI_MODEL;
+          const temperature = process.env.GEMINI_TEMPERATURE
+            ? Number(process.env.GEMINI_TEMPERATURE)
+            : undefined;
+          const maxTokens = process.env.GEMINI_MAX_TOKENS
+            ? Number(process.env.GEMINI_MAX_TOKENS)
+            : undefined;
+          const timeout = process.env.GEMINI_TIMEOUT
+            ? Number(process.env.GEMINI_TIMEOUT)
+            : undefined;
+
+          // Create geminiConfig if we have configuration
+          if (
+            apiKey ||
+            model ||
+            temperature !== undefined ||
+            maxTokens !== undefined ||
+            timeout !== undefined
+          ) {
+            geminiConfig = {
+              apiKey,
+              model,
+              temperature,
+              maxTokens,
+              timeout,
+            };
+          }
         }
       }
 
@@ -494,7 +620,9 @@ Setup:
         outputPath:
           options.outputPath || currentConfig.outputPath || "./reports",
         githubToken: this.configManager.getGitHubToken() || "",
+        aiProvider,
         janConfig,
+        geminiConfig,
       };
 
       // Validate the final config
@@ -750,12 +878,12 @@ Setup:
   }
 
   /**
-   * Test Jan AI connection and provide helpful feedback
+   * Test AI connection and provide helpful feedback
    */
-  private async testJanConnection(
-    janConfig?: Config["janConfig"]
-  ): Promise<void> {
-    if (!janConfig) {
+  private async testAIConnection(config: Config): Promise<void> {
+    const provider = config.aiProvider || "jan";
+
+    if (provider === "jan" && !config.janConfig) {
       this.log(
         "No Jan AI configuration found - using fallback analysis",
         "warn"
@@ -763,29 +891,79 @@ Setup:
       return;
     }
 
-    this.log("Testing Jan AI connection...", "debug");
+    if (provider === "gemini" && !config.geminiConfig) {
+      this.log(
+        "No Gemini AI configuration found - using fallback analysis",
+        "warn"
+      );
+      return;
+    }
+
+    this.log(`Testing ${provider.toUpperCase()} AI connection...`, "debug");
 
     try {
-      const janClient = new JanClient(janConfig);
-      const connection = await janClient.testConnection();
+      if (provider === "jan") {
+        const janClient = new JanClient(config.janConfig);
+        const connection = await janClient.testConnection();
 
-      if (connection.connected) {
-        this.log("Jan AI connection successful ✅", "debug");
-      } else {
-        this.log(`Jan AI connection failed: ${connection.error}`, "warn");
-        this.log("Falling back to manual analysis. To use Jan AI:", "warn");
-        this.log("1. Make sure Jan is running (download from jan.ai)", "warn");
-        this.log("2. Enable API server in Jan settings", "warn");
-        this.log("3. Set JAN_MODEL environment variable", "warn");
-        this.log("4. Download a compatible model (e.g., Llama 3.2 3B)", "warn");
+        if (connection.connected) {
+          this.log("Jan AI connection successful ✅", "debug");
+        } else {
+          this.log(`Jan AI connection failed: ${connection.error}`, "warn");
+          this.log("Falling back to manual analysis. To use Jan AI:", "warn");
+          this.log(
+            "1. Make sure Jan is running (download from jan.ai)",
+            "warn"
+          );
+          this.log("2. Enable API server in Jan settings", "warn");
+          this.log("3. Set JAN_MODEL environment variable", "warn");
+          this.log(
+            "4. Download a compatible model (e.g., Llama 3.2 3B)",
+            "warn"
+          );
+        }
+      } else if (provider === "gemini") {
+        const { GeminiClient } = await import("../services/gemini-client");
+        const geminiClient = new GeminiClient(config.geminiConfig);
+        const connection = await geminiClient.testConnection();
+
+        if (connection.connected) {
+          this.log("Gemini AI connection successful ✅", "debug");
+        } else {
+          this.log(`Gemini AI connection failed: ${connection.error}`, "warn");
+          this.log(
+            "Falling back to manual analysis. To use Gemini AI:",
+            "warn"
+          );
+          this.log(
+            "1. Get API key from: https://makersuite.google.com/app/apikey",
+            "warn"
+          );
+          this.log("2. Set GEMINI_API_KEY environment variable", "warn");
+          this.log("3. Optionally set GEMINI_MODEL for specific model", "warn");
+        }
       }
     } catch (error: any) {
-      this.log(`Jan AI test failed: ${error.message}`, "warn");
+      this.log(
+        `${provider.toUpperCase()} AI test failed: ${error.message}`,
+        "warn"
+      );
       this.log("Will use fallback analysis instead", "warn");
 
-      if (error.message.includes("Jan AI model must be specified")) {
+      if (
+        provider === "jan" &&
+        error.message.includes("Jan AI model must be specified")
+      ) {
         this.log(
           "💡 Set JAN_MODEL environment variable to enable Jan AI",
+          "warn"
+        );
+      } else if (
+        provider === "gemini" &&
+        error.message.includes("GEMINI_API_KEY")
+      ) {
+        this.log(
+          "💡 Set GEMINI_API_KEY environment variable to enable Gemini AI",
           "warn"
         );
       }
@@ -802,6 +980,9 @@ Setup:
       config.githubToken,
       config.janConfig
     );
+
+    // Initialize AI provider based on configuration
+    scraper.initializeAIProvider(config);
 
     try {
       const result = await scraper.scrapeRepository(config, (progress) => {
@@ -841,8 +1022,11 @@ Setup:
       );
       this.log(`   Workarounds Found: ${result.metadata.workaroundsFound}`);
       this.log(`   Analysis Method: ${result.metadata.analysisMethod}`);
-      if (result.metadata.janConnectionStatus) {
-        this.log(`   Jan AI Status: ${result.metadata.janConnectionStatus}`);
+      if (result.metadata.aiConnectionStatus) {
+        this.log(`   AI Status: ${result.metadata.aiConnectionStatus}`);
+      }
+      if (result.metadata.aiProvider) {
+        this.log(`   AI Provider: ${result.metadata.aiProvider}`);
       }
       this.log(`   Report Saved: ${result.reportPath}`);
 

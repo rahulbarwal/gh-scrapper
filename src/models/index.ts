@@ -13,8 +13,25 @@ export interface GitHubIssue {
   relevanceScore: number;
   summary: string;
   workarounds: Workaround[];
-  // Jan AI Analysis Results
+  // AI Analysis Results (Jan or Gemini)
   janAnalysis?: JanAnalysisResult;
+  aiAnalysis?: {
+    relevanceScore: number;
+    relevanceReasoning: string;
+    hasWorkaround: boolean;
+    workaroundComplexity: "simple" | "moderate" | "complex" | "unknown";
+    workaroundType:
+      | "usage-level"
+      | "code-level"
+      | "architecture-level"
+      | "unknown";
+    workaroundDescription?: string;
+    implementationDifficulty: "easy" | "medium" | "hard" | "unknown";
+    summary: string;
+    framework: string;
+    browser: string;
+    provider: "jan" | "gemini";
+  };
 }
 
 export interface Comment {
@@ -62,9 +79,19 @@ export interface Config {
   maxIssues: number;
   minRelevanceScore: number;
   outputPath: string;
-  // Jan AI Configuration
+  // AI Provider Configuration
+  aiProvider?: "jan" | "gemini";
+  // Jan AI Configuration (legacy, now handled through AIProviderConfig)
   janConfig?: {
     baseUrl?: string;
+    model?: string;
+    maxTokens?: number;
+    temperature?: number;
+    timeout?: number;
+  };
+  // Gemini AI Configuration
+  geminiConfig?: {
+    apiKey?: string;
     model?: string;
     maxTokens?: number;
     temperature?: number;
@@ -77,6 +104,7 @@ export interface ScrapingMetadata {
   relevantIssuesFound: number;
   averageRelevanceScore: number;
   workaroundsFound: number;
-  analysisMethod: "jan-ai" | "manual-fallback";
-  janConnectionStatus?: string;
+  analysisMethod: "jan-ai" | "gemini-ai" | "manual-fallback";
+  aiConnectionStatus?: string;
+  aiProvider?: string;
 }

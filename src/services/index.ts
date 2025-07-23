@@ -8,6 +8,21 @@ export {
 } from "./jan-client";
 
 export {
+  GeminiClient,
+  type GeminiAnalysisRequest,
+  type GeminiAnalysisResult,
+  type GeminiClientConfig,
+} from "./gemini-client";
+
+export {
+  AIProviderService,
+  type AIProvider,
+  type AIAnalysisRequest,
+  type AIAnalysisResult,
+  type AIProviderConfig,
+} from "./ai-provider";
+
+export {
   IssueParser,
   type ParsedIssueContent,
   type IssueMetadata,

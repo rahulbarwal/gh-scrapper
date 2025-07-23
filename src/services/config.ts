@@ -31,21 +31,21 @@ export class ConfigManager {
       this.loadFromEnvironment();
 
       // Load from config file if it exists
-      if (await fs.pathExists(this.configPath)) {
-        try {
-          const fileConfig = await fs.readJson(this.configPath);
-          this.config = { ...fileConfig, ...this.config }; // env vars take precedence
-        } catch (error: any) {
-          // Use centralized error handling for file system errors
-          const scraperError = ErrorHandler.convertToScraperError(
-            error,
-            context
-          );
-          console.warn(
-            `Warning: Could not read config file (${scraperError.message}), using environment variables only`
-          );
-        }
-      }
+      // if (await fs.pathExists(this.configPath)) {
+      //   try {
+      //     const fileConfig = await fs.readJson(this.configPath);
+      //     this.config = { ...fileConfig, ...this.config }; // env vars take precedence
+      //   } catch (error: any) {
+      //     // Use centralized error handling for file system errors
+      //     const scraperError = ErrorHandler.convertToScraperError(
+      //       error,
+      //       context
+      //     );
+      //     console.warn(
+      //       `Warning: Could not read config file (${scraperError.message}), using environment variables only`
+      //     );
+      //   }
+      // }
 
       return this.config;
     } catch (error: any) {
