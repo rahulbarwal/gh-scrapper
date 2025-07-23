@@ -51,7 +51,7 @@ export class JanClient {
       : config.temperature || 0.3;
     this.timeout = process.env.JAN_TIMEOUT
       ? Number(process.env.JAN_TIMEOUT)
-      : config.timeout || 90000; // Increased to 90 seconds for complex analysis
+      : config.timeout || 120000; // 120 seconds for complex analysis
 
     // Only validate model if Jan AI features will be used
     // The scraper will handle fallback when Jan AI is not available
@@ -232,7 +232,7 @@ export class JanClient {
         throw new Error("No response content from Jan AI");
       }
 
-      // Handle responses that may be wrapped in markdown code blocks
+      // Handle responses that may be wrapped in markdown code blocks or truncated
       let cleanContent = content.trim();
 
       try {
@@ -250,19 +250,42 @@ export class JanClient {
         // Additional cleanup for common formatting issues
         cleanContent = cleanContent.replace(/^json\n/, ""); // Remove "json" language identifier
 
+        // Check if JSON appears to be truncated
+        if (cleanContent.startsWith("{") && !cleanContent.endsWith("}")) {
+          console.warn(
+            `JSON response appears truncated for issue #${request.issue.number}. Attempting to fix...`
+          );
+
+          // Try to find the last complete field and close the JSON
+          const lastCompleteField = cleanContent.lastIndexOf('",');
+          if (lastCompleteField > 0) {
+            cleanContent =
+              cleanContent.substring(0, lastCompleteField + 1) + "\n}";
+            console.log(
+              `Attempted to fix truncated JSON for issue #${request.issue.number}`
+            );
+          } else {
+            // If we can't fix it, create a fallback response
+            console.warn(
+              `Cannot fix truncated JSON for issue #${request.issue.number}, using fallback`
+            );
+            return this.createFallbackResult(request.issue);
+          }
+        }
+
         const analysis = JSON.parse(cleanContent);
         return this.validateAndNormalizeResult(analysis);
       } catch (parseError: any) {
         console.error(`JSON Parse Error for issue #${request.issue.number}:`);
-        console.error(`Original response: ${content}`);
-        console.error(`Cleaned content: ${cleanContent}`);
+        console.error(`Original response: ${content.substring(0, 500)}...`);
+        console.error(`Cleaned content: ${cleanContent.substring(0, 500)}...`);
         console.error(`Parse error: ${parseError.message}`);
 
-        throw new Error(
-          `Failed to parse Jan AI response as JSON: ${
-            parseError.message
-          }. Response: ${content.substring(0, 200)}...`
+        // If JSON parsing fails, return a fallback result instead of throwing
+        console.warn(
+          `Using fallback result for issue #${request.issue.number} due to parse error`
         );
+        return this.createFallbackResult(request.issue);
       }
     }, context);
   }
@@ -380,17 +403,14 @@ Please analyze this GitHub issue and provide a JSON response with the following 
 The target project uses React + Vite, and primarily supports Firefox and Chrome browsers.
 
 **Framework Priority Adjustments**:
-- Issues mentioning "react" or "vite": ADD 10 points to relevance score
 - Issues mentioning "astro", "vue", "svelte", "nextjs": SUBTRACT 10 points (lower priority)
 - Issues mentioning other frameworks: SUBTRACT 10 points (not relevant)
 
 **Browser Priority Adjustments**:
-- Issues mentioning "firefox" or "chrome": ADD 10 points to relevance score
 - Issues mentioning "safari", "edge": SUBTRACT 10 points (lower priority)
 - Issues mentioning other browsers: SUBTRACT 10 points (not supported)
 
 **Feature vs. Bug Scoring**:
-- Issues mentioning "bug" or "fix": ADD 10 points to relevance score
 - Issues mentioning "feature" or "enhancement": SUBTRACT 10 points to relevance score
 
 **Combined Scoring Logic**:
@@ -573,16 +593,46 @@ Focus on practical analysis that helps developers understand if this issue affec
    * Create a fallback result when LLM analysis fails
    */
   private createFallbackResult(issue: GitHubIssue): JanAnalysisResult {
+    // Try to extract some basic information from the issue
+    const issueText = `${issue.title} ${
+      issue.description || ""
+    } ${issue.labels.join(" ")}`.toLowerCase();
+
+    // Basic framework detection
+    let framework = "N/A";
+    if (issueText.includes("nextjs") || issueText.includes("next.js"))
+      framework = "nextjs";
+    else if (issueText.includes("vite")) framework = "vite";
+    else if (issueText.includes("astro")) framework = "astro";
+    else if (issueText.includes("vue")) framework = "vue";
+    else if (issueText.includes("svelte")) framework = "svelte";
+    else if (issueText.includes("react")) framework = "react";
+
+    // Basic browser detection
+    let browser = "N/A";
+    if (issueText.includes("chrome")) browser = "chrome";
+    else if (issueText.includes("firefox")) browser = "firefox";
+    else if (issueText.includes("safari")) browser = "safari";
+    else if (issueText.includes("edge")) browser = "edge";
+
+    // Basic workaround detection
+    const hasWorkaround =
+      issueText.includes("workaround") ||
+      issueText.includes("solution") ||
+      issueText.includes("fix") ||
+      issue.comments.some((c) => c.body.toLowerCase().includes("workaround"));
+
     return {
       relevanceScore: 50, // Neutral score when analysis fails
-      relevanceReasoning: "Analysis failed, manual review required",
-      hasWorkaround: false,
-      workaroundComplexity: "unknown",
-      workaroundType: "unknown",
+      relevanceReasoning:
+        "Analysis failed, manual review required. Basic information extracted from issue content.",
+      hasWorkaround,
+      workaroundComplexity: hasWorkaround ? "unknown" : "unknown",
+      workaroundType: hasWorkaround ? "unknown" : "unknown",
       implementationDifficulty: "unknown",
       summary: `Issue #${issue.number}: ${issue.title}`,
-      framework: "N/A",
-      browser: "N/A",
+      framework,
+      browser,
     };
   }
 }
