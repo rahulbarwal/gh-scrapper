@@ -166,10 +166,10 @@ export class JanClient {
                   CRITICAL REQUIREMENTS:
                   - Always respond with valid JSON only, no additional text or explanations outside the JSON
                   - Code quotes should use exactly 3 backticks both before and after, no language specification
-                  - MUST extract and include framework information (nextjs, vite, astro, vue, etc.) - if none found, use "N/A"
-                  - MUST extract and include browser information (chrome, firefox, safari, edge, etc.) - if none found, use "N/A"
+                  - For framework: Only specify if explicitly mentioned in the issue (nextjs, vite, astro, vue, etc.) - prefer "N/A" if uncertain
+                  - For browser: Only specify if explicitly mentioned in the issue (chrome, firefox, safari, edge, etc.) - prefer "N/A" if uncertain
                   - Look for framework and browser mentions in issue title, description, labels, and comments
-                  - Be thorough in extracting technical details from the issue content`,
+                  - When in doubt about framework or browser, use "N/A" rather than guessing`,
               },
               {
                 role: "user",
@@ -299,7 +299,7 @@ export class JanClient {
     const results: JanAnalysisResult[] = [];
 
     // Process in smaller batches with longer delays to avoid timeouts
-    const batchSize = 2; // Reduced from 3 to 2 for better timeout handling
+    const batchSize = 5; // Reduced from 3 to 2 for better timeout handling
     for (let i = 0; i < requests.length; i += batchSize) {
       const batch = requests.slice(i, i + batchSize);
 
@@ -396,8 +396,8 @@ Please analyze this GitHub issue and provide a JSON response with the following 
   - "architecture-level": Requires changes to the core library/framework
 - implementationDifficulty: How hard would it be to implement the workaround?
 - summary: 1-2 sentences about the issue's core problem and impact
-- framework: Extract any framework mentioned (nextjs, vite, astro, react, vue, etc.) or "N/A" if none found
-- browser: Extract any browser mentioned (chrome, firefox, safari, edge, etc.) or "N/A" if none found
+- framework: Only include if explicitly mentioned (nextjs, vite, astro, react, vue, etc.) - use "N/A" if uncertain or not mentioned
+- browser: Only include if explicitly mentioned (chrome, firefox, safari, edge, etc.) - use "N/A" if uncertain or not mentioned
 
 **PRIORITY FRAMEWORK AND BROWSER SCORING**:
 The target project uses React + Vite, and primarily supports Firefox and Chrome browsers.
