@@ -51,7 +51,7 @@ export class JanClient {
       : config.temperature || 0.3;
     this.timeout = process.env.JAN_TIMEOUT
       ? Number(process.env.JAN_TIMEOUT)
-      : config.timeout || 30000;
+      : config.timeout || 90000; // Increased to 90 seconds for complex analysis
 
     // Only validate model if Jan AI features will be used
     // The scraper will handle fallback when Jan AI is not available
@@ -152,34 +152,57 @@ export class JanClient {
         headers.Authorization = `Bearer ${process.env.JAN_API_KEY}`;
       }
 
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            {
-              role: "system",
-              content: `You are an expert software engineer analyzing GitHub issues for relevance and workarounds. 
-                CRITICAL REQUIREMENTS:
-                - Always respond with valid JSON only, no additional text or explanations outside the JSON
-                - Code quotes should use exactly 3 backticks both before and after, no language specification
-                - MUST extract and include framework information (nextjs, vite, astro, react, vue, etc.) - if none found, use "N/A"
-                - MUST extract and include browser information (chrome, firefox, safari, edge, etc.) - if none found, use "N/A"
-                - Look for framework and browser mentions in issue title, description, labels, and comments
-                - Be thorough in extracting technical details from the issue content`,
-            },
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
-          max_tokens: this.maxTokens,
-          temperature: this.temperature,
-          response_format: { type: "json_object" },
-        }),
-        signal: AbortSignal.timeout(this.timeout),
-      });
+      let response;
+      try {
+        response = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model: this.model,
+            messages: [
+              {
+                role: "system",
+                content: `You are an expert software engineer analyzing GitHub issues for relevance and workarounds. 
+                  CRITICAL REQUIREMENTS:
+                  - Always respond with valid JSON only, no additional text or explanations outside the JSON
+                  - Code quotes should use exactly 3 backticks both before and after, no language specification
+                  - MUST extract and include framework information (nextjs, vite, astro, vue, etc.) - if none found, use "N/A"
+                  - MUST extract and include browser information (chrome, firefox, safari, edge, etc.) - if none found, use "N/A"
+                  - Look for framework and browser mentions in issue title, description, labels, and comments
+                  - Be thorough in extracting technical details from the issue content`,
+              },
+              {
+                role: "user",
+                content: prompt,
+              },
+            ],
+            max_tokens: this.maxTokens,
+            temperature: this.temperature,
+            response_format: { type: "json_object" },
+          }),
+          signal: AbortSignal.timeout(this.timeout),
+        });
+      } catch (fetchError: any) {
+        // Handle timeout and connection errors with more specific messages
+        if (
+          fetchError.name === "TimeoutError" ||
+          fetchError.message?.includes("timeout")
+        ) {
+          throw new Error(
+            `Jan AI analysis timed out after ${
+              this.timeout / 1000
+            } seconds. Consider increasing JAN_TIMEOUT environment variable or reducing prompt complexity.`
+          );
+        }
+        if (fetchError.name === "AbortError") {
+          throw new Error(
+            `Jan AI request was aborted after ${
+              this.timeout / 1000
+            } seconds. This usually indicates a timeout.`
+          );
+        }
+        throw new Error(`Jan AI connection failed: ${fetchError.message}`);
+      }
 
       if (!response.ok) {
         let errorDetails = `${response.status} ${response.statusText}`;
@@ -209,12 +232,36 @@ export class JanClient {
         throw new Error("No response content from Jan AI");
       }
 
+      // Handle responses that may be wrapped in markdown code blocks
+      let cleanContent = content.trim();
+
       try {
-        const analysis = JSON.parse(content);
+        // Remove markdown code blocks if present
+        if (cleanContent.startsWith("```") && cleanContent.endsWith("```")) {
+          // Remove opening and closing code blocks
+          cleanContent = cleanContent
+            .replace(/^```[\w]*\n?/, "")
+            .replace(/\n?```$/, "");
+          console.log(
+            `Removed markdown code blocks from Jan AI response for issue #${request.issue.number}`
+          );
+        }
+
+        // Additional cleanup for common formatting issues
+        cleanContent = cleanContent.replace(/^json\n/, ""); // Remove "json" language identifier
+
+        const analysis = JSON.parse(cleanContent);
         return this.validateAndNormalizeResult(analysis);
       } catch (parseError: any) {
+        console.error(`JSON Parse Error for issue #${request.issue.number}:`);
+        console.error(`Original response: ${content}`);
+        console.error(`Cleaned content: ${cleanContent}`);
+        console.error(`Parse error: ${parseError.message}`);
+
         throw new Error(
-          `Failed to parse Jan AI response as JSON: ${parseError.message}. Response: ${content}`
+          `Failed to parse Jan AI response as JSON: ${
+            parseError.message
+          }. Response: ${content.substring(0, 200)}...`
         );
       }
     }, context);
@@ -228,10 +275,16 @@ export class JanClient {
   ): Promise<JanAnalysisResult[]> {
     const results: JanAnalysisResult[] = [];
 
-    // Process in batches of 3 to avoid overwhelming the local server
-    const batchSize = 3;
+    // Process in smaller batches with longer delays to avoid timeouts
+    const batchSize = 2; // Reduced from 3 to 2 for better timeout handling
     for (let i = 0; i < requests.length; i += batchSize) {
       const batch = requests.slice(i, i + batchSize);
+
+      console.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(
+          requests.length / batchSize
+        )} (${batch.length} issues)...`
+      );
 
       const batchPromises = batch.map((request) =>
         this.analyzeIssue(request).catch((error) => {
@@ -245,9 +298,10 @@ export class JanClient {
       const batchResults = await Promise.all(batchPromises);
       results.push(...batchResults);
 
-      // Small delay between batches to be gentle on local server
+      // Longer delay between batches to prevent overwhelming the local server
       if (i + batchSize < requests.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        console.log(`Waiting 3 seconds before next batch...`);
+        await new Promise((resolve) => setTimeout(resolve, 3000)); // Increased from 1s to 3s
       }
     }
 
@@ -304,7 +358,7 @@ Please analyze this GitHub issue and provide a JSON response with the following 
   "workaroundDescription": "Brief description of the workaround if available",
   "implementationDifficulty": "easy|medium|hard|unknown",
   "summary": "Concise summary of the issue and its impact",
-  "framework": "nextjs|vite|astro|react|vue|N/A",
+  "framework": "nextjs|vite|astro|react|vue|svelte|N/A",
   "browser": "chrome|firefox|safari|edge|N/A"
 }
 
@@ -326,15 +380,14 @@ Please analyze this GitHub issue and provide a JSON response with the following 
 The target project uses React + Vite, and primarily supports Firefox and Chrome browsers.
 
 **Framework Priority Adjustments**:
-- Issues mentioning "react" or "vite": ADD 10-15 points to relevance score
-- Issues mentioning "nextjs": ADD 5-8 points (React-based, good compatibility)  
-- Issues mentioning "astro", "vue", "svelte": SUBTRACT 5-10 points (lower priority)
-- Issues mentioning other frameworks: SUBTRACT 10-15 points (not relevant)
+- Issues mentioning "react" or "vite": ADD 10 points to relevance score
+- Issues mentioning "astro", "vue", "svelte", "nextjs": SUBTRACT 5 points (lower priority)
+- Issues mentioning other frameworks: SUBTRACT 5 points (not relevant)
 
 **Browser Priority Adjustments**:
-- Issues mentioning "firefox" or "chrome": ADD 5-10 points to relevance score
-- Issues mentioning "safari", "edge": SUBTRACT 3-5 points (lower priority)
-- Issues mentioning other browsers: SUBTRACT 5-10 points (not supported)
+- Issues mentioning "firefox" or "chrome": ADD 10 points to relevance score
+- Issues mentioning "safari", "edge": SUBTRACT 5 points (lower priority)
+- Issues mentioning other browsers: SUBTRACT 5 points (not supported)
 
 **Combined Scoring Logic**:
 1. Start with base relevance to "${productArea}" (0-100)

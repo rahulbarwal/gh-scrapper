@@ -199,6 +199,14 @@ export PRODUCT_AREA="performance issues"
 export MAX_ISSUES=100
 export MIN_RELEVANCE_SCORE=30
 export OUTPUT_PATH=./reports
+
+# Jan AI Configuration (Optional - for enhanced analysis)
+export JAN_URL=http://localhost:1337/v1
+export JAN_MODEL=your_model_name
+export JAN_API_KEY=your_api_key_if_required
+export JAN_TIMEOUT=90000        # Timeout in milliseconds (default: 90 seconds)
+export JAN_MAX_TOKENS=4000      # Maximum tokens for analysis
+export JAN_TEMPERATURE=0.3      # Temperature for AI responses
 ```
 
 ## Configuration
