@@ -350,7 +350,7 @@ export class JanClient {
 Please analyze this GitHub issue and provide a JSON response with the following structure:
 
 {
-  "relevanceScore": 85,
+  "relevanceScore": 55,
   "relevanceReasoning": "Brief explanation of why this issue is relevant to the product area",
   "hasWorkaround": true,
   "workaroundComplexity": "simple|moderate|complex|unknown",
@@ -381,20 +381,25 @@ The target project uses React + Vite, and primarily supports Firefox and Chrome 
 
 **Framework Priority Adjustments**:
 - Issues mentioning "react" or "vite": ADD 10 points to relevance score
-- Issues mentioning "astro", "vue", "svelte", "nextjs": SUBTRACT 5 points (lower priority)
-- Issues mentioning other frameworks: SUBTRACT 5 points (not relevant)
+- Issues mentioning "astro", "vue", "svelte", "nextjs": SUBTRACT 10 points (lower priority)
+- Issues mentioning other frameworks: SUBTRACT 10 points (not relevant)
 
 **Browser Priority Adjustments**:
 - Issues mentioning "firefox" or "chrome": ADD 10 points to relevance score
-- Issues mentioning "safari", "edge": SUBTRACT 5 points (lower priority)
-- Issues mentioning other browsers: SUBTRACT 5 points (not supported)
+- Issues mentioning "safari", "edge": SUBTRACT 10 points (lower priority)
+- Issues mentioning other browsers: SUBTRACT 10 points (not supported)
+
+**Feature vs. Bug Scoring**:
+- Issues mentioning "bug" or "fix": ADD 10 points to relevance score
+- Issues mentioning "feature" or "enhancement": SUBTRACT 10 points to relevance score
 
 **Combined Scoring Logic**:
 1. Start with base relevance to "${productArea}" (0-100)
 2. Apply framework priority adjustments
-3. Apply browser priority adjustments  
-4. Ensure final score stays within 0-100 range
-5. If issue mentions both high-priority framework AND browser, it should score very highly (85-95+)
+3. Apply browser priority adjustments
+4. Apply feature vs. bug scoring
+5. Ensure final score stays within 0-100 range
+6. If issue mentions both high-priority framework AND browser, it should score very highly (85-95+)
 
 Focus on practical analysis that helps developers understand if this issue affects their use of ${productArea} and what they can do about it.
 `.trim();
