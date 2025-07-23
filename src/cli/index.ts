@@ -72,23 +72,26 @@ class GitHubIssueScraperCLI {
       .option("-v, --verbose", "Enable verbose logging")
       .option("-i, --interactive", "Run in interactive mode with prompts")
       .option("--setup", "Show setup instructions for GitHub token")
-      // Jan AI options - no default values, must use environment variables
-      .option("--jan-url <url>", "Jan AI server URL (or set JAN_URL env var)")
+      // Jan AI options - DEPRECATED: Use environment variables instead
+      .option(
+        "--jan-url <url>",
+        "[DEPRECATED] Use JAN_URL environment variable"
+      )
       .option(
         "--jan-model <model>",
-        "Jan AI model to use (or set JAN_MODEL env var)"
+        "[DEPRECATED] Use JAN_MODEL environment variable"
       )
       .option(
         "--jan-temperature <temp>",
-        "Jan AI temperature 0.0-2.0 (or set JAN_TEMPERATURE env var)"
+        "[DEPRECATED] Use JAN_TEMPERATURE environment variable"
       )
       .option(
         "--jan-max-tokens <tokens>",
-        "Jan AI max tokens (or set JAN_MAX_TOKENS env var)"
+        "[DEPRECATED] Use JAN_MAX_TOKENS environment variable"
       )
       .option(
         "--jan-timeout <ms>",
-        "Jan AI request timeout in milliseconds (or set JAN_TIMEOUT env var)"
+        "[DEPRECATED] Use JAN_TIMEOUT environment variable"
       )
       .option("--no-jan", "Disable Jan AI analysis and use fallback scoring")
       .action(async (options: CLIOptions) => {
@@ -347,31 +350,27 @@ Setup:
 
       let janConfig = undefined;
       if (useJan) {
-        const janUrl =
-          (await this.promptUser(
-            rl,
-            `Jan AI URL (${
-              process.env.JAN_URL || "http://localhost:1337/v1"
-            }): `
-          )) ||
-          process.env.JAN_URL ||
-          "http://localhost:1337/v1";
+        // Only use environment variables for Jan configuration
+        const janUrl = process.env.JAN_URL;
+        const janModel = process.env.JAN_MODEL;
 
-        const janModel =
-          (await this.promptUser(
-            rl,
-            `Jan AI Model (${process.env.JAN_MODEL || "none set"}): `
-          )) ||
-          process.env.JAN_MODEL ||
-          "";
+        // Show current environment variable values but don't allow overrides
+        console.log(`Current Jan AI URL: ${janUrl || "not set"}`);
+        console.log(`Current Jan AI Model: ${janModel || "not set"}`);
 
         if (janModel) {
           janConfig = {
             baseUrl: janUrl,
             model: janModel,
           };
+          console.log(
+            "✅ Using Jan AI configuration from environment variables"
+          );
         } else {
-          console.log("⚠️  No model specified - will use fallback analysis");
+          console.log(
+            "⚠️  No JAN_MODEL environment variable set - will use fallback analysis"
+          );
+          console.log("💡 Set JAN_MODEL environment variable to enable Jan AI");
         }
       }
 
@@ -416,27 +415,50 @@ Setup:
       operation: "validating configuration",
     };
 
+    // Warn about deprecated Jan AI CLI options
+    if (
+      options.janUrl ||
+      options.janModel ||
+      options.janTemperature ||
+      options.janMaxTokens ||
+      options.janTimeout
+    ) {
+      this.log(
+        "⚠️  Jan AI CLI options are deprecated. Use environment variables instead:",
+        "warn"
+      );
+      if (options.janUrl)
+        this.log("   Use JAN_URL instead of --jan-url", "warn");
+      if (options.janModel)
+        this.log("   Use JAN_MODEL instead of --jan-model", "warn");
+      if (options.janTemperature)
+        this.log("   Use JAN_TEMPERATURE instead of --jan-temperature", "warn");
+      if (options.janMaxTokens)
+        this.log("   Use JAN_MAX_TOKENS instead of --jan-max-tokens", "warn");
+      if (options.janTimeout)
+        this.log("   Use JAN_TIMEOUT instead of --jan-timeout", "warn");
+      this.log(
+        "   CLI options will be ignored in favor of environment variables",
+        "warn"
+      );
+    }
+
     try {
       const currentConfig = this.configManager.getConfig();
 
       // Build Jan AI configuration - use environment variables exclusively
       let janConfig = undefined;
       if (!options.noJan) {
-        const baseUrl = options.janUrl || process.env.JAN_URL;
-        const model = options.janModel || process.env.JAN_MODEL;
-        const temperature = options.janTemperature
-          ? Number(options.janTemperature)
-          : process.env.JAN_TEMPERATURE
+        // Only read from environment variables, ignore CLI options for Jan config
+        const baseUrl = process.env.JAN_URL;
+        const model = process.env.JAN_MODEL;
+        const temperature = process.env.JAN_TEMPERATURE
           ? Number(process.env.JAN_TEMPERATURE)
           : undefined;
-        const maxTokens = options.janMaxTokens
-          ? Number(options.janMaxTokens)
-          : process.env.JAN_MAX_TOKENS
+        const maxTokens = process.env.JAN_MAX_TOKENS
           ? Number(process.env.JAN_MAX_TOKENS)
           : undefined;
-        const timeout = options.janTimeout
-          ? Number(options.janTimeout)
-          : process.env.JAN_TIMEOUT
+        const timeout = process.env.JAN_TIMEOUT
           ? Number(process.env.JAN_TIMEOUT)
           : undefined;
 
@@ -459,19 +481,21 @@ Setup:
       }
 
       // Merge options with current config
-      const mergedConfig: Partial<Config> = currentConfig;
-      // {
-      //   ...currentConfig,
-      //   repository: options.repository || currentConfig.repository,
-      //   productArea: options.productArea || currentConfig.productArea,
-      //   maxIssues: options.maxIssues || currentConfig.maxIssues || 50,
-      //   minRelevanceScore:
-      //     options.minRelevanceScore || currentConfig.minRelevanceScore || 30,
-      //   outputPath:
-      //     options.outputPath || currentConfig.outputPath || "./reports",
-      //   githubToken: this.configManager.getGitHubToken(),
-      //   janConfig,
-      // };
+      const mergedConfig: Config = {
+        ...currentConfig,
+        repository: options.repository || currentConfig.repository || "",
+        productArea: options.productArea || currentConfig.productArea || "",
+        maxIssues: options.maxIssues
+          ? parseInt(String(options.maxIssues), 10)
+          : currentConfig.maxIssues || 50,
+        minRelevanceScore: options.minRelevanceScore
+          ? parseInt(String(options.minRelevanceScore), 10)
+          : currentConfig.minRelevanceScore || 30,
+        outputPath:
+          options.outputPath || currentConfig.outputPath || "./reports",
+        githubToken: this.configManager.getGitHubToken() || "",
+        janConfig,
+      };
 
       // Validate the final config
       const validatedConfig = await this.validateConfigOnly(

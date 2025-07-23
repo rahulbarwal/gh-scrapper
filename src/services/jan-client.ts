@@ -39,19 +39,18 @@ export class JanClient {
   private readonly timeout: number;
 
   constructor(config: JanClientConfig = {}) {
-    // Use environment variables exclusively, with minimal fallbacks only for critical settings
-    this.baseUrl =
-      process.env.JAN_URL || config.baseUrl || "http://localhost:1337/v1";
-    this.model = process.env.JAN_MODEL || config.model || ""; // No default model - must be specified
+    // Read exclusively from environment variables
+    this.baseUrl = process.env.JAN_URL || "http://localhost:1337/v1";
+    this.model = process.env.JAN_MODEL || ""; // No default model - must be specified
     this.maxTokens = process.env.JAN_MAX_TOKENS
       ? Number(process.env.JAN_MAX_TOKENS)
-      : config.maxTokens || 4000; // Increased default max tokens
+      : 4000; // Default max tokens
     this.temperature = process.env.JAN_TEMPERATURE
       ? Number(process.env.JAN_TEMPERATURE)
-      : config.temperature || 0.3;
+      : 0.3; // Default temperature
     this.timeout = process.env.JAN_TIMEOUT
       ? Number(process.env.JAN_TIMEOUT)
-      : config.timeout || 120000; // 120 seconds for complex analysis
+      : 120000; // 120 seconds for complex analysis
 
     // Only validate model if Jan AI features will be used
     // The scraper will handle fallback when Jan AI is not available
